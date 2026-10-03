@@ -1,0 +1,17 @@
+# Cloudflare 에 화면 파일로 올리지 않을 것 (화면에는 index.html 만 필요하다)
+.git
+.gitignore
+.assetsignore
+.claude
+.wrangler
+node_modules
+__pycache__
+data
+local-server-version
+*.py
+*.bat
+*.md
+worker.js
+wrangler.jsonc
+firebase-config.json
+firebase-config.example.json

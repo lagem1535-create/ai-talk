@@ -1,0 +1,15 @@
+{
+  // Cloudflare Workers 배포 설정 (GitHub 와 연결하면 올릴 때마다 자동 배포)
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ai-talk",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-03",
+  "assets": {
+    "directory": "./",
+    "binding": "ASSETS",
+    // 이 주소만 worker.js 가 처리하고, 나머지는 파일을 그대로 보여 준다
+    "run_worker_first": ["/firebase-config.json"]
+  },
+  // 대시보드의 Variables and Secrets 에 넣은 값을 배포할 때 지우지 않는다
+  "keep_vars": true
+}

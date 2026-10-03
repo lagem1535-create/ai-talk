@@ -513,9 +513,11 @@ async function loadConfig() {
   document.getElementById('auth').hidden = false;
   document.getElementById('auth-form').hidden = true;
   document.getElementById('google-btn').hidden = true;
-  document.querySelector('.auth-note').textContent =
-    'firebase-config.json 파일을 찾을 수 없어요. firebase-config.example.json 을 복사해서 이름을 firebase-config.json 으로 바꾸고 ' +
-    '내 Firebase 프로젝트의 설정을 넣은 뒤, 1. AI Talk 열기.bat 으로 다시 열어 주세요.';
+  const local = ['localhost', '127.0.0.1'].includes(location.hostname);
+  document.querySelector('.auth-note').textContent = !local
+    ? 'Firebase 설정을 찾을 수 없어요. Cloudflare 의 Variables and Secrets 에 FIREBASE_API_KEY, FIREBASE_DATABASE_URL 등을 넣어 주세요.'
+    : 'firebase-config.json 파일을 찾을 수 없어요. firebase-config.example.json 을 복사해서 이름을 firebase-config.json 으로 바꾸고 ' +
+      '내 Firebase 프로젝트의 설정을 넣은 뒤, 1. AI Talk 열기.bat 으로 다시 열어 주세요.';
   throw new Error('firebase-config.json 없음');
 }
 const firebaseConfig = await loadConfig();
@@ -1266,7 +1268,9 @@ function renderInfo(room, force) {
     // 폴더 경로까지 넣어서, CMD 어디에서 붙여 넣어도 실행되게 한다
     const script = APP_DIR.startsWith('__') ? 'ai_agent.py' : `"${APP_DIR}\\ai_agent.py"`;
     const count = room.kind === 'private' ? 1 : S.count;   // 개인대화방에는 AI가 하나만 들어온다
-    const cmd = `python ${script} --cli ${S.cli} --code ${room.code}` + (count > 1 ? ` --count ${count} --yes` : '');
+    // 배포된 주소로 들어왔으면, AI 프로그램도 이 주소에서 Firebase 설정을 받아 가게 한다
+    const site = APP_DIR.startsWith('__') ? ` --site ${location.origin}` : '';
+    const cmd = `python ${script}${site} --cli ${S.cli} --code ${room.code}` + (count > 1 ? ` --count ${count} --yes` : '');
     const [, cliTitle, exe] = CLIS.find(([id]) => id === S.cli) || CLIS[0];
     const countInput = h('input', { type: 'number', min: 1, max: MAX_COUNT, value: count, 'aria-label': '넣을 AI 개수' });
     countInput.addEventListener('change', async () => {

@@ -60,6 +60,20 @@ AI 쪽 API 키는 쓰지 않습니다. 이 컴퓨터에 로그인되어 있는 C
 
 다른 Firebase 프로젝트로 바꾸려면 `firebase-config.json` 만 고치면 됩니다.
 
+## Cloudflare 로 배포해서 다른 사람도 쓰게 하기
+
+GitHub 저장소를 Cloudflare Workers 에 연결하면, 올릴 때마다 자동으로 배포됩니다 (`wrangler.jsonc`, `worker.js`).
+Firebase 설정은 코드에 넣지 않고 Cloudflare 대시보드의 **Settings → Variables and Secrets** 에 넣습니다.
+
+- 한 번에: 이름 `FIREBASE_CONFIG`, 값에 Firebase 콘솔의 `firebaseConfig = { … }` 부분을 통째로 붙여 넣기
+- 또는 하나씩: `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_DATABASE_URL`, `FIREBASE_PROJECT_ID`, `FIREBASE_APP_ID`
+
+값을 넣은 뒤에는 다시 배포해야 반영됩니다. 배포된 주소로 Google 로그인을 하려면 Firebase 콘솔 →
+Authentication → 설정 → **승인된 도메인**에 그 주소(예: `ai-talk.이름.workers.dev`)를 추가하세요.
+
+배포된 주소로 들어온 사람은 AI 초대 명령에 `--site 주소` 가 붙어서 나오므로,
+`ai_agent.py` 만 받으면 `firebase-config.json` 없이도 같은 Firebase 로 AI를 넣을 수 있습니다.
+
 ## 방의 종류
 
 | | 설명 |

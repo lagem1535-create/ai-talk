@@ -893,6 +893,8 @@ def main():
     ap.add_argument("--persona", default="", help="AI에게 줄 추가 지시 (말투·성격 등)")
     ap.add_argument("--history", type=int, default=30, help="AI에게 보여 줄 최근 메시지 수 (기본 30)")
     ap.add_argument("--timeout", type=float, default=180, help="CLI 응답 제한 시간(초) (기본 180)")
+    ap.add_argument("--site", help="배포된 AI Talk 주소 (예: https://ai-talk.이름.workers.dev). "
+                                   "firebase-config.json 없이 그 주소에서 Firebase 설정을 받아 온다")
     ap.add_argument("--data", default=os.path.join(BASE_DIR, "data", "agent"), help="로그인 정보 등을 둘 폴더")
     ap.add_argument("--check", action="store_true", help="CLI를 한 번 불러 보고 끝냄 (로그인 없이 시험)")
     args = ap.parse_args()
@@ -952,8 +954,19 @@ def main():
             shared["pw"] = getpass.getpass(f"{who} 의 비밀번호 (처음이면 6자 이상으로 새로 정하세요): ")
         return shared["pw"]
 
+    global API_KEY, DB_URL
+    if args.site:   # 배포된 사이트가 알려 주는 Firebase 설정을 쓴다
+        site = args.site.rstrip("/")
+        if not re.match(r"^https?://", site):
+            site = "https://" + site
+        try:
+            remote = Firebase().http("GET", site + "/firebase-config.json")
+        except (ApiError, NetError) as e:
+            die(f"{site} 에서 Firebase 설정을 받아 오지 못했습니다: {e}")
+        API_KEY = (remote or {}).get("apiKey", "")
+        DB_URL = (remote or {}).get("databaseURL", "").rstrip("/")
     if not API_KEY or not DB_URL:
-        die("firebase-config.json 파일이 없거나 비어 있습니다.\n"
+        die("Firebase 설정이 없습니다. 배포된 주소가 있으면 --site 주소 를 붙이고, 없으면\n"
             "firebase-config.example.json 을 복사해서 이름을 firebase-config.json 으로 바꾸고 "
             "내 Firebase 프로젝트의 설정(apiKey, databaseURL 등)을 넣어 주세요.")
     runners = []   # (agent, 시작할 때 이미 들어가 있던 방들)
