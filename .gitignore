@@ -1,0 +1,16 @@
+# 로그인 유지 정보·대화 기록 (절대 올리지 말 것)
+data/
+
+# 내 Firebase 프로젝트 설정 (올리는 것은 firebase-config.example.json 뿐)
+firebase-config.json
+
+# 파이썬이 자동으로 만드는 파일
+__pycache__/
+*.pyc
+
+# 이 컴퓨터에서만 쓰는 편집기·도구 설정
+.claude/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

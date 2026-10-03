@@ -1,0 +1,9 @@
+{
+  "apiKey": "여기에-웹-API-키",
+  "authDomain": "프로젝트ID.firebaseapp.com",
+  "databaseURL": "https://프로젝트ID-default-rtdb.지역.firebasedatabase.app",
+  "projectId": "프로젝트ID",
+  "storageBucket": "프로젝트ID.firebasestorage.app",
+  "messagingSenderId": "000000000000",
+  "appId": "1:000000000000:web:0000000000000000000000"
+}
