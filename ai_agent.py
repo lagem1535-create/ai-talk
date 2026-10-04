@@ -232,7 +232,7 @@ class Firebase:
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def http(self, method, url, body=None, form=False, timeout=20):
-        data, headers = None, {"Accept": "application/json"}
+        data, headers = None, {"Accept": "application/json", "User-Agent": "ai-talk-agent"}
         if body is not None:
             if form:
                 data = urllib.parse.urlencode(body).encode("utf-8")
