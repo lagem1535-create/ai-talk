@@ -276,6 +276,9 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .step span { min-width: 0; overflow-wrap: anywhere; }
 .step.cmd span, .step.file span { font: 12.5px var(--mono); }
 .step.note span { color: var(--ink-2); }
+.mode-bar { display: flex; align-items: center; gap: 10px; margin: 0 16px 6px; font-size: 12.5px; color: var(--ink-3); }
+.mode-bar .seg { margin: 0; flex: none; }
+.mode-bar .seg button { padding: 4px 12px; }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .pick { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; font-weight: 600; }
 .pick.on { border-color: var(--ink); background: var(--panel-2); }
@@ -553,6 +556,7 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
         <button type="button" id="jump" class="jump" hidden><span data-icon="down"></span>새 메시지</button>
       </div>
       <div id="status" class="status"></div>
+      <div id="mode-bar" class="mode-bar" hidden></div>
       <form id="composer" class="composer">
         <textarea id="input" rows="1" maxlength="8000" placeholder="메시지 보내기 (Enter 전송 · Shift+Enter 줄바꿈)" aria-label="메시지"></textarea>
         <button type="submit" class="send" id="send-btn" aria-label="보내기" disabled><span data-icon="send"></span></button>
@@ -1424,13 +1428,14 @@ function renderChrome(room) {
     : [h('span', { class: 'chip mode m-' + room.name_mode }, icon(mode.icon), mode.title),
       h('span', { class: 'chip' }, room.kind === 'private' ? [icon('lock'), '1:1 개인대화'] : '오픈채팅')]),
     h('span', { class: 'chip' }, `AI ${ais.length} · 사람 ${room.members.length - ais.length}`));
+  renderModeBar(room);
   $('#guide-btn').hidden = !room.coding;
   $('#invite-btn').hidden = room.is_dm;
   if (room.coding && !store.get('codingHelpSeen') && $('#modal').hidden) {   // 코딩방에 처음 들어오면 설명서부터
     store.set('codingHelpSeen', '1');
     openHelp('coding');
   }
-  $('#input').placeholder = room.coding ? '만들거나 고칠 것을 적어 주세요 (AI가 먼저 계획을 보여 줍니다)' : '메시지 보내기 (Enter 전송 · Shift+Enter 줄바꿈)';
+  $('#input').placeholder = room.coding ? (codeMode(room.id) === 'run' ? '만들거나 고칠 것을 적어 주세요 (AI가 바로 작업합니다)' : '만들거나 고칠 것을 적어 주세요 (AI가 먼저 계획을 보여 줍니다)') : '메시지 보내기 (Enter 전송 · Shift+Enter 줄바꿈)';
   renderActs(room);
 
   const banner = $('#banner');
@@ -1522,11 +1527,20 @@ function renderInfo(room, force) {
     // 명령 실행 허용 (위험해서 켤 때 한 번 확인받는다). Antigravity 는 지원하지 않는다
     const shellOk = S.cli !== 'agy';
     const shell = room.coding && shellOk && store.get('shell.' + room.id) === '1';
-    if (room.coding && project && shell) cmd += ' --shell';
+    const allCmds = shell && store.get('full.' + room.id) === '1';
+    if (room.coding && project && shell) cmd += allCmds ? ' --full' : ' --shell';
+    const fullSwitch = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(allCmds), 'aria-label': '모든 명령 허용',
+      onclick: async () => {
+        if (!allCmds && !(await trustFull())) return;   // 명령 실행을 이미 켰더라도 한 번 더 확인받는다
+        store.set('full.' + room.id, allCmds ? '0' : '1');
+        if (!allCmds) store.set('shell.' + room.id, '1');
+        renderInfo(current(), true);
+      } });
     const shellSwitch = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(shell), 'aria-label': '명령 실행 허용',
       onclick: async () => {
         if (!shell && !(await trustShell())) return;
         store.set('shell.' + room.id, shell ? '0' : '1');
+        if (shell) store.set('full.' + room.id, '0');   // 명령 실행을 끄면 '모든 명령 허용'도 꺼진다
         renderInfo(current(), true);
       } });
     const ready = !room.coding || !!project;
@@ -1543,6 +1557,8 @@ function renderInfo(room, force) {
         room.coding ? h('div', { class: 'project-row' }, h('span', null, 'AI가 고칠 프로젝트'), picker) : null,
         room.coding && shellOk ? h('div', { class: 'row' }, h('div', null, h('strong', null, '명령 실행 허용'),
           h('small', null, '켜면 계획을 승인했을 때 AI가 git·python 같은 명령도 실행합니다.')), shellSwitch) : null,
+        room.coding && shellOk ? h('div', { class: 'row' }, h('div', null, h('strong', null, '모든 명령 허용 (매우 위험)'),
+          h('small', null, '폴더 밖 작업, 설치, 설정 변경, 컴퓨터 끄기까지 AI가 묻지 않고 실행합니다.')), fullSwitch) : null,
         room.coding && !shellOk ? h('p', { class: 'hint' }, 'Antigravity 는 명령 실행 허용을 지원하지 않아요. Claude 나 Copilot 을 고르세요.') : null,
         room.kind === 'private' ? null : h('label', { class: 'count-row' },
           h('span', null, `${cliTitle} 몇 개를 넣을까요? (1~${MAX_COUNT})`), countInput),
@@ -1743,6 +1759,22 @@ function msgNode(m, prev, fresh) {
       row,
       m.kind === 'ai' ? h('div', { class: 'acts', 'data-key': m.id, 'data-mid': m.mid || '', hidden: true }) : null));
 }
+// 코딩방: 입력 칸 위에서 계획 모드 / 실행 모드를 고른다
+const codeMode = (roomId) => (store.get('codemode.' + roomId) === 'run' ? 'run' : 'plan');
+function renderModeBar(room) {
+  const bar = $('#mode-bar');
+  bar.hidden = !room.coding;
+  if (!room.coding) return;
+  const mode = codeMode(room.id);
+  if (bar.dataset.sig === room.id + mode) return;
+  bar.dataset.sig = room.id + mode;
+  const pick = (value) => { store.set('codemode.' + room.id, value); renderModeBar(room); renderChrome(room); };
+  bar.replaceChildren(
+    h('div', { class: 'seg' },
+      h('button', { type: 'button', class: mode === 'plan' ? 'on' : '', onclick: () => pick('plan') }, '계획 모드'),
+      h('button', { type: 'button', class: mode === 'run' ? 'on' : '', onclick: () => pick('run') }, '실행 모드')),
+    h('span', null, mode === 'plan' ? 'AI가 계획을 먼저 보여 주고, 승인하면 작업합니다.' : 'AI가 계획 없이 바로 작업합니다.'));
+}
 // 코딩방: AI가 무엇을 읽고, 고치고, 실행했는지 접었다 펼 수 있는 목록으로 보여 준다
 const STEP_KIND = { write: ['생성', 'file'], edit: ['수정', 'file'], read: ['읽음', 'file'], search: ['찾기', 'file'], cmd: ['명령', 'cmd'], note: ['생각', 'note'] };
 function stepsBox(m) {
@@ -1873,7 +1905,7 @@ async function sendMessage() {
   input.value = '';
   autosize();
   try {
-    await sendText(room, text);
+    await sendText(room, text, room.coding && codeMode(room.id) === 'run' ? 'direct' : '');   // 실행 모드면 계획 없이 바로
     scrollBottom();
   } catch (err) {
     if (!input.value) { input.value = text; autosize(); }
@@ -1919,6 +1951,27 @@ function trustShell() {
       h('p', null, '켠 뒤에는 새로 나오는 명령으로 AI를 다시 불러야 적용됩니다. 끄고 싶으면 스위치를 끄고 AI를 다시 부르세요.'),
       h('div', { class: 'form-actions' },
         h('button', { type: 'button', class: 'btn', onclick: closeModal }, '켜지 않기'), yes)), yes);
+    modalDone = resolve;
+  });
+}
+// 코딩방에서 모든 명령을 허용하기 전에 확인받는다 (명령 실행을 이미 켰어도 다시 묻는다)
+function trustFull() {
+  return new Promise((resolve) => {
+    const agree = h('input', { type: 'checkbox' });
+    const yes = h('button', { type: 'button', class: 'btn primary danger', disabled: true, onclick: () => { modalDone = null; closeModal(); resolve(true); } }, '모든 명령 허용 켜기');
+    agree.addEventListener('change', () => { yes.disabled = !agree.checked; });
+    const no = h('button', { type: 'button', class: 'btn', onclick: closeModal }, '켜지 않기');
+    openModal('AI에게 모든 명령을 허용할까요?', h('div', { class: 'trust' },
+      h('p', { class: 'trust-warn' }, '매우 위험: AI가 이 컴퓨터에서 무엇이든 묻지 않고 실행합니다.'),
+      h('ul', null,
+        h('li', null, '프로젝트 폴더 밖의 파일을 읽고, 고치고, 지울 수 있습니다. 문서·사진·다른 프로젝트도 포함됩니다.'),
+        h('li', null, '프로그램 설치·삭제, 윈도우 설정 변경, 컴퓨터 끄기·다시 시작 같은 시스템 명령도 실행합니다.'),
+        h('li', null, '인터넷에서 파일을 받아 실행하거나, 내 파일을 밖으로 보낼 수도 있습니다.'),
+        h('li', null, '「명령 실행 허용」과 달리 "위험한 명령은 하지 말라"는 제한이 없습니다. AI가 실수하거나 코드 속 글에 속으면 되돌릴 수 없습니다.'),
+        h('li', null, '실행 모드와 함께 쓰면 계획 확인 없이 바로 실행됩니다.')),
+      h('p', null, '믿을 수 있는 내 프로젝트에서만, 필요할 때만 켜고, 끝나면 끄고 AI를 다시 불러 주세요.'),
+      h('label', { style: 'display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;font-weight:600' }, agree, '위 내용을 읽었고, 생기는 일은 내가 책임집니다.'),
+      h('div', { class: 'form-actions' }, no, yes)), no);
     modalDone = resolve;
   });
 }
