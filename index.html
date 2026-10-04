@@ -258,10 +258,30 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .me { flex: 1; }
 .choices.three { grid-template-columns: repeat(3, 1fr); }
 .choices.three .choice { flex-direction: column; gap: 4px; }
-.chip.code { background: var(--term); color: var(--term-green); }
+.chip.coding { background: var(--term); color: var(--term-green); }
+.bubble.card { border-left: 3px solid var(--accent); border-radius: 4px 14px 14px 4px; }
+.bubble.card.result { border-left-color: var(--ok); }
+.card-tag { display: inline-block; margin-bottom: 6px; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 700; }
+.card.result .card-tag { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; font-weight: 600; }
+.pick.on { border-color: var(--ink); background: var(--panel-2); }
+.pick-list { display: grid; gap: 2px; max-height: 50vh; overflow-y: auto; }
+.pick-list .invite-row { padding: 6px 2px; }
+.pick-list small { display: block; font-size: 12px; font-weight: 400; color: var(--ink-3); }
+.help .seg { margin-bottom: 14px; }
+.a-bar { fill: var(--line); }
+.a-out { fill: none; stroke: var(--ink-3); stroke-width: 1.5; }
+.a-ok { fill: var(--ok); }
 .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .project-row { display: grid; gap: 6px; margin-bottom: 8px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 .project-row input[type=text] { padding: 7px 10px; font: 13px var(--mono); }
+.project-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.project-now { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); font-size: 13px; }
+.project-now span { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.project-now .icon-btn { width: 26px; height: 26px; font-size: 13px; }
+.repo-row { display: flex; gap: 6px; margin-bottom: 10px; }
+.repo-row input[type=text] { flex: 1; min-width: 0; }
 .bubble pre {
   margin: 0; padding: 10px 12px; border-radius: 10px; overflow-x: auto; white-space: pre;
   background: var(--term); color: var(--term-ink); font: 12.5px/1.55 var(--mono);
@@ -483,7 +503,7 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
     <div id="friend-list" class="friend-list"></div>
     <footer class="side-foot">
       <div class="me"><span class="avatar" id="me-avatar"></span><div><strong id="me-name"></strong><span id="me-id"></span></div></div>
-      <button type="button" class="icon-btn" id="help-btn" title="사용법" aria-label="사용법"><span data-icon="help"></span></button>
+      <button type="button" class="icon-btn" id="help-btn" title="설명서" aria-label="설명서"><span data-icon="help"></span></button>
       <button type="button" class="icon-btn" id="logout-btn" title="로그아웃" aria-label="로그아웃"><span data-icon="logout"></span></button>
     </footer>
   </aside>
@@ -510,6 +530,8 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
       <header class="chat-head">
         <button type="button" class="icon-btn back" id="back-btn" aria-label="대화방 목록으로"><span data-icon="back"></span></button>
         <div class="chat-title"><h2 id="room-title"></h2><div id="room-chips" class="chips"></div></div>
+        <button type="button" class="icon-btn" id="guide-btn" title="코딩방 설명서" aria-label="코딩방 설명서" hidden><span data-icon="help"></span></button>
+        <button type="button" class="icon-btn" id="invite-btn" title="친구 초대" aria-label="친구 초대"><span data-icon="userplus"></span></button>
         <button type="button" class="btn small" id="info-btn"><span data-icon="users"></span><span id="member-count"></span></button>
       </header>
       <div id="banner" class="banner" hidden></div>
@@ -629,6 +651,7 @@ const ICONS = {
   userplus: '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/>',
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   code: '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
 };
 function icon(name) {
@@ -1135,20 +1158,56 @@ function friendDm(uid) {   // 친구와 바로 1:1 대화
     { mid: S.uid, uid: S.uid, label: S.me.name, kind: 'human' },
     { mid: uid, uid, label: f.name, kind: f.kind }, '친구와의 1:1 대화입니다.');
 }
-async function inviteFriend(room, uid) {   // 친구를 초대코드 없이 바로 방에 넣는다
+async function inviteFriend(roomId, uid) {   // 친구를 초대코드 없이 바로 방에 넣는다
   const f = S.friends[uid];
-  const raw = S.raw.get(room.id);
+  const raw = (await get(R('rooms', roomId))).val();   // 연달아 초대해도 이름·번호가 겹치지 않게 최신 정보로
+  if (!f || !raw || !raw.meta) throw userError('초대할 수 없어요.');
   const found = Object.entries(raw.members || {}).find(([, m]) => m.uid === uid);
-  if (found && !found[1].left) throw userError('이미 이 방에 있어요.');
+  if (found && !found[1].left) throw userError(`${f.name} 님은 이미 이 방에 있어요.`);
   if (raw.meta.kind === 'private' && Object.values(raw.members).filter((m) => !m.left).length >= 2) throw userError('개인대화방에는 두 명까지만 들어올 수 있어요.');
   const mid = found ? found[0] : randomId(8);
   const named = found ? { label: found[1].label, anon: found[1].anon_no || null } : makeLabel(raw, f.kind, f.name, '');
-  const sys = systemChange(room.id, `${named.label} 님을 초대했습니다.`, lastN(raw));
+  const sys = systemChange(roomId, `${named.label} 님을 초대했습니다.`, lastN(raw));
   await update(R(), {
     ...sys.changes,
-    [`rooms/${room.id}/members/${mid}`]: { uid, label: named.label, kind: f.kind, anon_no: named.anon, joined: SV, seen: found ? found[1].seen || 0 : 0, read: sys.key, read_n: lastN(raw) },
-    [`userRooms/${uid}/${room.id}`]: mid,
+    [`rooms/${roomId}/members/${mid}`]: { uid, label: named.label, kind: f.kind, anon_no: named.anon, joined: SV, seen: found ? found[1].seen || 0 : 0, read: sys.key, read_n: lastN(raw) },
+    [`userRooms/${uid}/${roomId}`]: mid,
   });
+  toast(`${f.name} 님을 초대했어요.`);
+}
+const friendRow = (uid, f, ...buttons) => h('div', { class: 'invite-row' },
+  avatar(uid, String(f.name || '?'), f.kind),
+  h('span', { class: 'fname' }, String(f.name || '?'), ' ', f.kind === 'ai' ? h('span', { class: 'tag' }, 'AI') : null),
+  buttons);
+function openInvite(roomId) {   // 지금 방에 친구 초대하기
+  const room = S.byId.get(roomId);
+  if (!room) return;
+  const list = h('div', { class: 'pick-list' });
+  const draw = () => {
+    const here = S.byId.get(roomId) || room;
+    const items = Object.entries(S.friends).filter(([uid]) => !here.members.some((m) => m.uid === uid));
+    list.replaceChildren(...(items.length ? items.map(([uid, f]) => friendRow(uid, f,
+      h('button', { type: 'button', class: 'btn small', onclick: (e) => {
+        e.currentTarget.disabled = true;
+        inviteFriend(roomId, uid).then(() => setTimeout(draw, 300), fail);
+      } }, icon('plus'), '초대')))
+      : [h('p', { class: 'hint' }, Object.keys(S.friends).length ? '초대할 수 있는 친구가 모두 이 방에 있어요.' : '아직 친구가 없어요. 왼쪽 아래 「친구」 칸에 아이디를 입력해서 추가해 보세요.')]));
+  };
+  draw();
+  openModal(`'${room.name}' 방에 친구 초대`, h('div', null, list,
+    h('p', { class: 'hint' }, 'AI 친구는 그 AI의 ai_agent.py 가 켜져 있어야 대답해요.'),
+    h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'btn primary', onclick: closeModal }, '닫기'))));
+}
+function openInviteTo(uid) {   // 이 친구를 내 방 중 하나에 초대하기
+  const f = S.friends[uid];
+  const rooms = S.rooms.filter((r) => !r.is_dm && !(r.kind === 'private' && r.members.length >= 2) && !r.members.some((m) => m.uid === uid));
+  const list = h('div', { class: 'pick-list' }, rooms.length ? rooms.map((r) => h('div', { class: 'invite-row' },
+    h('span', { class: 'ricon m-' + r.name_mode }, icon(r.coding ? 'code' : r.kind === 'private' ? 'lock' : MODES[r.name_mode].icon)),
+    h('span', { class: 'fname' }, r.name, h('small', null, r.coding ? '코딩방' : MODES[r.name_mode].title)),
+    h('button', { type: 'button', class: 'btn small', onclick: () => inviteFriend(r.id, uid).then(() => { closeModal(); openRoom(r.id); }, fail) }, icon('plus'), '초대')))
+    : h('p', { class: 'hint' }, '초대할 수 있는 방이 없어요. 먼저 방을 만들어 주세요.'));
+  openModal(`${f.name} 님을 어느 방에 초대할까요?`, h('div', null, list,
+    h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'btn', onclick: closeModal }, '닫기'))));
 }
 function renderFriends() {
   const list = $('#friend-list');
@@ -1162,6 +1221,7 @@ function renderFriends() {
     h('div', { class: 'fname' },
       h('strong', null, String(f.name || '?'), f.kind === 'ai' ? h('span', { class: 'tag' }, 'AI') : null),
       h('span', null, f.username ? '@' + f.username : '')),
+    h('button', { type: 'button', class: 'icon-btn', title: '방에 초대', 'aria-label': `${f.name} 님을 방에 초대`, onclick: () => openInviteTo(uid) }, icon('plus')),
     h('button', { type: 'button', class: 'icon-btn', title: '1:1 대화', 'aria-label': `${f.name} 님과 1:1 대화`, onclick: () => friendDm(uid).then(openRoom, fail) }, icon('chat')),
     h('button', { type: 'button', class: 'icon-btn', title: '친구 삭제', 'aria-label': `${f.name} 님 친구 삭제`, onclick: async () => {
       if (await confirmBox('친구 삭제', `${f.name} 님을 친구 목록에서 지울까요? 함께 있던 대화방은 그대로 남아요.`, '삭제', true)) set(R('friends', S.uid, uid), null).catch(fail);
@@ -1180,6 +1240,52 @@ async function renameMember(room, member, next) {
     [`rooms/${room.id}/members/${member.mid}/label`]: next,
   });
 }
+// 코딩방: 프로젝트 폴더 고르기. 내 컴퓨터에서 열었으면 화면 서버가 폴더 선택 창을 띄워 준다.
+// 배포된 사이트에서는 브라우저가 폴더 경로를 알 수 없어서, AI를 켤 때 창이 뜨도록 '?' 로 표시해 둔다.
+async function pickFolder() {
+  if (APP_DIR.startsWith('__')) {
+    toast('AI를 켜는 명령을 실행하면 폴더 선택 창이 뜹니다.');
+    return '?';
+  }
+  toast('폴더 선택 창을 띄웠어요. 안 보이면 작업 표시줄을 확인하세요.');
+  const res = await fetch('pick-folder', { method: 'POST' });
+  if (!res.ok) throw userError('폴더 선택 창을 열지 못했어요. 「1. AI Talk 열기.bat」으로 화면 서버를 다시 켜 주세요.');
+  return String((await res.json()).path || '').replace(/"/g, '');
+}
+// 코딩방: GitHub 아이디만 넣으면 공개 저장소 목록을 보여 주고, 눌러서 고른다
+function openRepoPicker(done) {
+  const user = h('input', { type: 'text', maxlength: 60, value: store.get('githubUser') || '', placeholder: 'GitHub 아이디 (예: octocat)', spellcheck: 'false', autocomplete: 'off' });
+  const list = h('div', { class: 'pick-list' });
+  const manual = h('input', { type: 'text', maxlength: 200, placeholder: '아이디/저장소 또는 https://github.com/아이디/저장소', spellcheck: 'false' });
+  const choose = (repo) => { closeModal(); done('https://github.com/' + repo); };
+  const load = async () => {
+    const name = user.value.trim().replace(/^@/, '');
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(name)) return list.replaceChildren(h('p', { class: 'hint' }, 'GitHub 아이디를 정확히 입력해 주세요.'));
+    list.replaceChildren(h('p', { class: 'hint' }, '불러오는 중…'));
+    try {
+      const res = await fetch(`https://api.github.com/users/${name}/repos?sort=updated&per_page=50`);
+      if (!res.ok) throw new Error(res.status === 404 ? '그런 GitHub 아이디가 없어요.' : '저장소 목록을 불러오지 못했어요. 잠시 뒤 다시 해 주세요.');
+      const repos = await res.json();
+      store.set('githubUser', name);
+      list.replaceChildren(...(repos.length ? repos.map((r) => h('div', { class: 'invite-row' },
+        h('span', { class: 'fname' }, String(r.name), h('small', null, String(r.description || (r.fork ? '포크한 저장소' : '설명 없음')).slice(0, 70))),
+        h('button', { type: 'button', class: 'btn small', onclick: () => choose(String(r.full_name)) }, '선택')))
+        : [h('p', { class: 'hint' }, '공개 저장소가 없어요. 비공개 저장소는 아래에 직접 적어 주세요.')]));
+    } catch (err) {
+      list.replaceChildren(h('p', { class: 'hint' }, err.message));
+    }
+  };
+  openModal('GitHub 저장소 연결', h('div', null,
+    h('form', { class: 'repo-row', onsubmit: (e) => { e.preventDefault(); load(); } }, user, h('button', { type: 'submit', class: 'btn primary' }, '저장소 보기')),
+    list,
+    h('form', { class: 'field', style: 'margin-top:14px', onsubmit: (e) => {
+      e.preventDefault();
+      const m = /^(?:https:\/\/github\.com\/)?([A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+?)(?:\.git)?\/?$/.exec(manual.value.trim());
+      if (m) choose(m[1]); else toast('아이디/저장소 모양으로 적어 주세요.', 'err');
+    } }, h('span', null, '비공개 저장소이거나 목록에 없으면 직접 입력 후 Enter'), manual),
+    h('p', { class: 'hint' }, '저장소는 AI를 켜는 컴퓨터로 받아 오며, 그 컴퓨터의 git 로그인으로 받고 올립니다.')), user);
+  if (user.value) load();
+}
 // 코딩방 작업 키: AI를 부르는 명령에 넣어 주는 비밀 값. 이 브라우저에만 저장하고 데이터베이스에는 올리지 않는다.
 // AI는 이 키로 서명한 지시만 따르므로, 다른 사람이 대화방 데이터를 고쳐도 내 컴퓨터의 파일을 건드릴 수 없다.
 const codeKey = (roomId) => store.get('codekey.' + roomId) || '';
@@ -1187,13 +1293,13 @@ function ensureCodeKey(roomId) {
   if (!codeKey(roomId)) store.set('codekey.' + roomId, randomId(32));
   return codeKey(roomId);
 }
-async function signOrder(secret, roomId, act, nonce, t, text) {
+async function signOrder(secret, roomId, act, to, nonce, t, text) {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${roomId}\n${act}\n${nonce}\n${t}\n${text}`));
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${roomId}\n${act}\n${to}\n${nonce}\n${t}\n${text}`));
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-async function sendText(room, text, act = '') {
+async function sendText(room, text, act = '', to = '') {   // to: 승인·취소처럼 AI 하나만 받아야 하는 지시의 대상
   const n = lastN(S.raw.get(room.id)) + 1;
   const key = push(R('messages', room.id)).key;
   const mid = room.me.mid;
@@ -1201,7 +1307,7 @@ async function sendText(room, text, act = '') {
   if (room.coding && codeKey(room.id)) {   // 코딩방에서는 내 지시임을 증명하는 서명을 붙인다
     const nonce = randomId(16);
     const t = Math.round(now());
-    Object.assign(order, { act, nonce, t, sig: await signOrder(codeKey(room.id), room.id, act, nonce, t, text) });
+    Object.assign(order, { act, to, nonce, t, sig: await signOrder(codeKey(room.id), room.id, act, to, nonce, t, text) });
   }
   await update(R(), {
     [`messages/${room.id}/${key}`]: { m: mid, name: room.me.label, kind: 'human', text, ts: SV, ...order },
@@ -1299,11 +1405,17 @@ function renderChrome(room) {
   const ais = room.members.filter((m) => m.kind === 'ai');
   $('#room-title').textContent = room.name;
   $('#member-count').textContent = String(room.members.length);
-  $('#room-chips').replaceChildren(
-    h('span', { class: 'chip mode m-' + room.name_mode }, icon(mode.icon), mode.title),
-    room.coding ? h('span', { class: 'chip code' }, icon('code'), '코딩방')
-      : h('span', { class: 'chip' }, room.kind === 'private' ? [icon('lock'), '1:1 개인대화'] : '오픈채팅'),
+  $('#room-chips').replaceChildren(...(room.coding
+    ? [h('span', { class: 'chip coding' }, icon('code'), '코딩방')]
+    : [h('span', { class: 'chip mode m-' + room.name_mode }, icon(mode.icon), mode.title),
+      h('span', { class: 'chip' }, room.kind === 'private' ? [icon('lock'), '1:1 개인대화'] : '오픈채팅')]),
     h('span', { class: 'chip' }, `AI ${ais.length} · 사람 ${room.members.length - ais.length}`));
+  $('#guide-btn').hidden = !room.coding;
+  $('#invite-btn').hidden = room.is_dm;
+  if (room.coding && !store.get('codingHelpSeen') && $('#modal').hidden) {   // 코딩방에 처음 들어오면 설명서부터
+    store.set('codingHelpSeen', '1');
+    openHelp('coding');
+  }
   $('#input').placeholder = room.coding ? '만들거나 고칠 것을 적어 주세요 (AI가 먼저 계획을 보여 줍니다)' : '메시지 보내기 (Enter 전송 · Shift+Enter 줄바꿈)';
   renderActs(room);
 
@@ -1350,7 +1462,8 @@ function renderInfo(room, force) {
         h('span', { class: 'cicon' }, icon('code')),
         h('div', null,
           h('strong', null, '코딩방'),
-          h('small', null, '할 일을 적으면 AI가 코드를 읽고 계획을 보여 줍니다. 「계획대로 실행」을 눌러야 파일을 고칩니다. 계획이 마음에 안 들면 의견을 적어 다시 받으세요.')))
+          h('small', null, '할 일을 적으면 AI가 코드를 읽고 계획을 보여 줍니다. 「계획대로 실행」을 눌러야 파일을 고칩니다. AI가 여럿이면 각자 계획을 내고, 고른 AI만 고칩니다.'),
+          h('button', { type: 'button', class: 'btn small', style: 'margin-top:8px', onclick: () => openHelp('coding') }, icon('help'), '코딩방 설명서')))
       : h('div', { class: 'mode-card m-' + room.name_mode },
         h('span', { class: 'cicon' }, icon(mode.icon)),
         h('div', null,
@@ -1361,7 +1474,7 @@ function renderInfo(room, force) {
     const full = room.kind === 'private' && room.members.length >= 2;
     // 폴더 경로까지 넣어서, CMD 어디에서 붙여 넣어도 실행되게 한다
     const script = APP_DIR.startsWith('__') ? 'ai_agent.py' : `"${APP_DIR}\\ai_agent.py"`;
-    const count = room.kind === 'private' || room.coding ? 1 : S.count;   // 개인대화방·코딩방에는 AI가 하나만
+    const count = room.kind === 'private' ? 1 : S.count;   // 개인대화방에는 AI가 하나만 들어온다
     // 배포된 주소로 들어왔으면, AI 프로그램도 이 주소에서 Firebase 설정을 받아 가게 한다
     const site = APP_DIR.startsWith('__') ? ` --site ${location.origin}` : '';
     let cmd = `python ${script}${site} --cli ${S.cli} --code ${room.code}` + (count > 1 ? ` --count ${count} --yes` : '');
@@ -1378,11 +1491,15 @@ function renderInfo(room, force) {
     // 코딩방: 어떤 프로젝트를 고칠지 정해야 명령이 완성된다
     const project = (store.get('project.' + room.id) || '').trim();
     const github = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(project);
-    const projectInput = h('input', { type: 'text', value: project, maxlength: 300, spellcheck: 'false', placeholder: 'C:\\내\\프로젝트\\폴더  또는  https://github.com/아이디/저장소' });
-    projectInput.addEventListener('change', () => {
-      store.set('project.' + room.id, projectInput.value.replace(/"/g, '').trim());
-      renderInfo(current(), true);
-    });
+    const setProject = (value) => { store.set('project.' + room.id, value); renderInfo(current(), true); };
+    const picker = !project
+      ? h('div', { class: 'project-pick' },
+        h('button', { type: 'button', class: 'btn', onclick: () => pickFolder().then((p) => p && setProject(p), fail) }, icon('folder'), '폴더 선택'),
+        h('button', { type: 'button', class: 'btn', onclick: () => openRepoPicker(setProject) }, icon('code'), 'GitHub 연결'))
+      : h('div', { class: 'project-now' },
+        icon(github ? 'code' : 'folder'),
+        h('span', null, project === '?' ? 'AI를 켤 때 폴더 선택 창이 뜹니다' : project.replace('https://github.com/', '')),
+        h('button', { type: 'button', class: 'icon-btn', title: '다시 고르기', 'aria-label': '프로젝트 다시 고르기', onclick: () => setProject('') }, icon('x')));
     if (room.coding && project) {
       cmd += (github ? ` --github ${project.replace(/\/$/, '')}` : ` --project "${project}"`) + ` --key ${ensureCodeKey(room.id)}`;
     }
@@ -1397,13 +1514,13 @@ function renderInfo(room, force) {
         h('h4', null, room.coding ? '코딩할 AI 부르기' : 'AI 초대하기'),
         h('div', { class: 'seg' }, CLIS.map(([id, title]) =>
           h('button', { type: 'button', class: id === S.cli ? 'on' : '', onclick: () => { S.cli = id; renderInfo(current(), true); } }, title))),
-        room.coding ? h('label', { class: 'project-row' }, h('span', null, 'AI가 고칠 프로젝트 (내 컴퓨터의 폴더 경로 또는 GitHub 주소)'), projectInput) : null,
-        room.kind === 'private' || room.coding ? null : h('label', { class: 'count-row' },
+        room.coding ? h('div', { class: 'project-row' }, h('span', null, 'AI가 고칠 프로젝트'), picker) : null,
+        room.kind === 'private' ? null : h('label', { class: 'count-row' },
           h('span', null, `${cliTitle} 몇 개를 넣을까요? (1~${MAX_COUNT})`), countInput),
         ready ? h('div', { class: 'term' },
           h('div', { class: 'term-line' }, h('span', { class: 'prompt' }, '$'), cmd.split(' ').map((word) => h('span', null, word))),
           h('button', { type: 'button', class: 'icon-btn', title: '명령 복사', 'aria-label': '명령 복사', onclick: () => copyText(cmd, '명령을 복사했어요') }, icon('copy')))
-          : h('p', { class: 'hint' }, '위 칸에 프로젝트 폴더 경로나 GitHub 저장소 주소를 넣고 Enter 를 누르면 명령이 나옵니다.'),
+          : h('p', { class: 'hint' }, '「폴더 선택」으로 내 컴퓨터의 폴더를 고르거나, 「GitHub 연결」로 저장소를 고르면 명령이 나옵니다.'),
         !ready ? null : h('p', { class: 'hint' }, `CMD 창에 이 한 줄만 붙여 넣고 Enter를 누르세요. ${exe} 는 이 명령이 알아서 켜고, AI에게 따로 말을 걸 필요는 없어요.`),
         !ready ? null : h('p', { class: 'hint' }, count > 1
           ? `처음에는 비밀번호(6자 이상)를 한 번만 묻고, AI 계정 ${count}개(${S.cli}, ${S.cli}2 …)에 모두 같은 비밀번호를 씁니다. 창을 켜 두는 동안 AI들이 방에 있습니다.`
@@ -1444,7 +1561,7 @@ function renderInfo(room, force) {
       invitable.map(([uid, f]) => h('div', { class: 'invite-row' },
         avatar(uid, String(f.name || '?'), f.kind),
         h('span', { class: 'fname' }, String(f.name || '?'), ' ', f.kind === 'ai' ? h('span', { class: 'tag' }, 'AI') : null),
-        h('button', { type: 'button', class: 'btn small', onclick: () => inviteFriend(room, uid).then(() => toast(`${f.name} 님을 초대했어요.`), fail) }, icon('plus'), '초대'))),
+        h('button', { type: 'button', class: 'btn small', onclick: () => inviteFriend(room.id, uid).catch(fail) }, icon('plus'), '초대'))),
       invitable.some(([, f]) => f.kind === 'ai') ? h('p', { class: 'hint' }, 'AI 친구는 그 AI의 ai_agent.py 가 켜져 있어야 대답해요.') : null));
   }
 
@@ -1567,7 +1684,11 @@ function previewHtml(code) {
 }
 function toMessage(id, key, m) {   // 데이터베이스의 메시지를 화면용으로 정리
   const kind = m.kind === 'human' || m.kind === 'ai' ? m.kind : 'system';
-  return { id: key, kind, mid: m.m || null, name: String(m.name || ''), mine: !!m.m && m.m === S.mine[id], text: String(m.text == null ? '' : m.text), ts: Number(m.ts) || now() };
+  return {
+    id: key, kind, mid: m.m || null, name: String(m.name || ''), mine: !!m.m && m.m === S.mine[id],
+    text: String(m.text == null ? '' : m.text), ts: Number(m.ts) || now(),
+    card: m.card === 'plan' || m.card === 'result' ? m.card : '',   // 코딩방의 계획·작업 결과
+  };
 }
 function dayNode(ts) {
   return h('div', { class: 'day' }, h('span', null, dayFmt.format(ts)));
@@ -1575,7 +1696,8 @@ function dayNode(ts) {
 function msgNode(m, prev, fresh) {
   if (m.kind === 'system') return h('div', { class: 'sys' }, h('span', null, m.text));
   const cont = !!prev && prev.kind !== 'system' && prev.mid === m.mid && m.ts - prev.ts < 180000 && dayKey(prev.ts) === dayKey(m.ts);
-  const bubble = h('div', { class: 'bubble', title: fullFmt.format(m.ts) });
+  const bubble = h('div', { class: 'bubble' + (m.card ? ' card ' + m.card : ''), title: fullFmt.format(m.ts) });
+  if (m.card) bubble.append(h('div', { class: 'card-tag' }, m.card === 'plan' ? '계획' : '작업 결과'));
   renderText(bubble, m.text);
   const row = h('div', { class: 'brow' }, bubble, cont ? null : h('time', null, timeFmt.format(m.ts)));
   const cls = 'msg' + (m.mine ? ' mine' : '') + (cont ? ' cont' : '') + (fresh ? ' new' : '');
@@ -1597,7 +1719,7 @@ function renderActs(room) {
     box.hidden = !type;
     const act = (name, text, label, cls) => h('button', { type: 'button', class: 'btn small' + (cls ? ' ' + cls : ''), onclick: () => {
       box.hidden = true;
-      sendText(room, text, name).catch(fail);
+      sendText(room, text, name, box.dataset.mid).catch(fail);   // 이 계획을 낸 AI만 받는다
     } }, label);
     if (type === 'plan') box.replaceChildren(act('run', '계획대로 실행해 주세요.', '계획대로 실행', 'primary'), act('cancel', '이 계획은 취소할게요.', '취소'));
     else if (type === 'push') box.replaceChildren(act('push', 'GitHub에 올려 주세요.', 'GitHub에 올리기', 'primary'));
@@ -1745,110 +1867,193 @@ function trustMulti(n, cliTitle) {
     modalDone = resolve;
   });
 }
-// 사용법에 넣는 그림 (직접 그린 고정된 SVG)
-const HELP_ART = [
-  // 1. 사람과 AI가 한 방에서 대화
-  '<rect class="a-bg" width="320" height="150" rx="14"/>' +
-  '<rect class="a-ink" x="166" y="18" width="130" height="28" rx="14"/><text class="a-tp" x="231" y="36" text-anchor="middle">안녕! 다들 뭐 해?</text>' +
-  '<rect class="a-anon" x="24" y="58" width="28" height="28" rx="9"/><text class="a-tw" x="38" y="76" text-anchor="middle">1</text>' +
-  '<rect class="a-panel" x="60" y="58" width="150" height="28" rx="14"/><text class="a-t" x="74" y="76">안녕하세요, 반가워요</text>' +
-  '<rect class="a-real" x="24" y="100" width="28" height="28" rx="9"/><text class="a-tw" x="38" y="118" text-anchor="middle">2</text>' +
-  '<rect class="a-panel" x="60" y="100" width="170" height="28" rx="14"/><text class="a-t" x="74" y="118">저도 대화에 낄게요!</text>' +
-  '<rect class="a-ink" x="238" y="106" width="22" height="15" rx="4"/><text class="a-tp mono" x="249" y="117" text-anchor="middle" style="font-size:9px">AI</text>',
-  // 2. 준비물 세 가지
-  '<rect class="a-bg" width="320" height="150" rx="14"/>' +
-  '<rect class="a-panel" x="20" y="24" width="86" height="102" rx="12"/><text class="a-acc" x="63" y="74" text-anchor="middle" style="font-size:26px;font-weight:800">Py</text><text class="a-t" x="63" y="108" text-anchor="middle">파이썬</text>' +
-  '<rect class="a-panel" x="117" y="24" width="86" height="102" rx="12"/><rect class="a-term" x="136" y="46" width="48" height="36" rx="8"/><text class="a-tt mono" x="146" y="70" style="font-size:15px">&gt;_</text><text class="a-t" x="160" y="108" text-anchor="middle">터미널 AI</text>' +
-  '<rect class="a-panel" x="214" y="24" width="86" height="102" rx="12"/><path class="a-arrow" d="M243 46h18l10 10v26h-28z M261 46v10h10"/><text class="a-t" x="257" y="108" text-anchor="middle">ai_agent.py</text>',
-  // 3. 방 만들고 명령 복사
-  '<rect class="a-bg" width="320" height="150" rx="14"/>' +
-  '<rect class="a-ink" x="18" y="60" width="92" height="30" rx="10"/><text class="a-tp" x="64" y="79" text-anchor="middle">+ 방 만들기</text>' +
-  '<path class="a-arrow" d="M120 75h20M133 68l7 7-7 7"/>' +
-  '<rect class="a-panel" x="150" y="16" width="152" height="118" rx="12"/><text class="a-t2" x="162" y="34" style="font-size:9.5px">초대코드</text>' +
-  '<rect class="a-dash" x="162" y="40" width="128" height="26" rx="8"/><text class="a-t mono" x="226" y="58" text-anchor="middle" style="font-size:13px;font-weight:700">ABCD-EFGH</text>' +
-  '<text class="a-t2" x="162" y="82" style="font-size:9.5px">AI 초대하기</text>' +
-  '<rect class="a-term" x="162" y="88" width="128" height="34" rx="8"/><text class="a-tg mono" x="170" y="109" style="font-size:9.5px">$</text><text class="a-tt mono" x="180" y="109" style="font-size:9.5px">python ai_…</text>' +
-  '<rect class="a-acc" x="256" y="96" width="28" height="18" rx="6"/><text class="a-tw" x="270" y="109" text-anchor="middle" style="font-size:9px">복사</text>',
-  // 4. CMD 창에 붙여 넣기
-  '<rect class="a-bg" width="320" height="150" rx="14"/>' +
-  '<rect class="a-term" x="22" y="18" width="276" height="114" rx="12"/>' +
-  '<circle class="a-td" cx="38" cy="32" r="3.5"/><circle class="a-td" cx="50" cy="32" r="3.5"/><circle class="a-td" cx="62" cy="32" r="3.5"/>' +
-  '<text class="a-td mono" x="36" y="58" style="font-size:10px">C:\\&gt;</text><text class="a-tt mono" x="62" y="58" style="font-size:10px">python ai_agent.py --cli claude …</text>' +
-  '<text class="a-td mono" x="36" y="78" style="font-size:10px">AI 계정의 비밀번호: ••••••</text>' +
-  '<text class="a-td mono" x="36" y="98" style="font-size:10px">방에 들어왔습니다. 이름: 익명 1</text>' +
-  '<text class="a-tg mono" x="36" y="118" style="font-size:10px">대화를 기다리는 중…</text>',
-  // 5. 알아 둘 점
-  '<rect class="a-bg" width="320" height="150" rx="14"/>' +
-  '<rect class="a-panel" x="20" y="26" width="132" height="98" rx="12"/><rect class="a-term" x="36" y="42" width="100" height="44" rx="8"/><text class="a-tg mono" x="46" y="68" style="font-size:10px">● 켜져 있음</text><text class="a-t" x="86" y="108" text-anchor="middle">창을 켜 둔 동안만</text>' +
-  '<rect class="a-panel" x="168" y="26" width="132" height="98" rx="12"/><rect class="a-acc" x="208" y="50" width="52" height="28" rx="14"/><circle class="a-tw" cx="246" cy="64" r="10"/><text class="a-t" x="234" y="108" text-anchor="middle">AI 응답 일시정지</text>',
-];
-function art(i) {
+// 설명서에 넣는 그림 (직접 그린 고정된 SVG)
+const BG = '<rect class="a-bg" width="320" height="150" rx="14"/>';
+const HELP_ART = {
+  chat: BG +
+    '<rect class="a-ink" x="166" y="18" width="130" height="28" rx="14"/><text class="a-tp" x="231" y="36" text-anchor="middle">안녕! 다들 뭐 해?</text>' +
+    '<rect class="a-anon" x="24" y="58" width="28" height="28" rx="9"/><text class="a-tw" x="38" y="76" text-anchor="middle">1</text>' +
+    '<rect class="a-panel" x="60" y="58" width="150" height="28" rx="14"/><text class="a-t" x="74" y="76">안녕하세요, 반가워요</text>' +
+    '<rect class="a-real" x="24" y="100" width="28" height="28" rx="9"/><text class="a-tw" x="38" y="118" text-anchor="middle">2</text>' +
+    '<rect class="a-panel" x="60" y="100" width="170" height="28" rx="14"/><text class="a-t" x="74" y="118">저도 대화에 낄게요!</text>' +
+    '<rect class="a-ink" x="238" y="106" width="22" height="15" rx="4"/><text class="a-tp mono" x="249" y="117" text-anchor="middle" style="font-size:9px">AI</text>',
+  need: BG +
+    '<rect class="a-panel" x="20" y="24" width="86" height="102" rx="12"/><text class="a-acc" x="63" y="74" text-anchor="middle" style="font-size:26px;font-weight:800">Py</text><text class="a-t" x="63" y="108" text-anchor="middle">파이썬</text>' +
+    '<rect class="a-panel" x="117" y="24" width="86" height="102" rx="12"/><rect class="a-term" x="136" y="46" width="48" height="36" rx="8"/><text class="a-tt mono" x="146" y="70" style="font-size:15px">&gt;_</text><text class="a-t" x="160" y="108" text-anchor="middle">터미널 AI</text>' +
+    '<rect class="a-panel" x="214" y="24" width="86" height="102" rx="12"/><path class="a-arrow" d="M243 46h18l10 10v26h-28z M261 46v10h10"/><text class="a-t" x="257" y="108" text-anchor="middle">ai_agent.py</text>',
+  invite: BG +
+    '<rect class="a-ink" x="18" y="60" width="92" height="30" rx="10"/><text class="a-tp" x="64" y="79" text-anchor="middle">+ 방 만들기</text>' +
+    '<path class="a-arrow" d="M120 75h20M133 68l7 7-7 7"/>' +
+    '<rect class="a-panel" x="150" y="16" width="152" height="118" rx="12"/><text class="a-t2" x="162" y="34" style="font-size:9.5px">초대코드</text>' +
+    '<rect class="a-dash" x="162" y="40" width="128" height="26" rx="8"/><text class="a-t mono" x="226" y="58" text-anchor="middle" style="font-size:13px;font-weight:700">ABCD-EFGH</text>' +
+    '<text class="a-t2" x="162" y="82" style="font-size:9.5px">AI 초대하기</text>' +
+    '<rect class="a-term" x="162" y="88" width="128" height="34" rx="8"/><text class="a-tg mono" x="170" y="109" style="font-size:9.5px">$</text><text class="a-tt mono" x="180" y="109" style="font-size:9.5px">python ai_…</text>' +
+    '<rect class="a-acc" x="256" y="96" width="28" height="18" rx="6"/><text class="a-tw" x="270" y="109" text-anchor="middle" style="font-size:9px">복사</text>',
+  cmd: BG +
+    '<rect class="a-term" x="22" y="18" width="276" height="114" rx="12"/>' +
+    '<circle class="a-td" cx="38" cy="32" r="3.5"/><circle class="a-td" cx="50" cy="32" r="3.5"/><circle class="a-td" cx="62" cy="32" r="3.5"/>' +
+    '<text class="a-td mono" x="36" y="58" style="font-size:10px">C:\\&gt;</text><text class="a-tt mono" x="62" y="58" style="font-size:10px">python ai_agent.py --cli claude …</text>' +
+    '<text class="a-td mono" x="36" y="78" style="font-size:10px">AI 계정의 비밀번호: ••••••</text>' +
+    '<text class="a-td mono" x="36" y="98" style="font-size:10px">방에 들어왔습니다. 이름: 익명 1</text>' +
+    '<text class="a-tg mono" x="36" y="118" style="font-size:10px">대화를 기다리는 중…</text>',
+  tips: BG +
+    '<rect class="a-panel" x="20" y="26" width="132" height="98" rx="12"/><rect class="a-term" x="36" y="42" width="100" height="44" rx="8"/><text class="a-tg mono" x="46" y="68" style="font-size:10px">● 켜져 있음</text><text class="a-t" x="86" y="108" text-anchor="middle">창을 켜 둔 동안만</text>' +
+    '<rect class="a-panel" x="168" y="26" width="132" height="98" rx="12"/><rect class="a-acc" x="208" y="50" width="52" height="28" rx="14"/><circle class="a-tw" cx="246" cy="64" r="10"/><text class="a-t" x="234" y="108" text-anchor="middle">AI 응답 일시정지</text>',
+  // 코딩방
+  project: BG +
+    '<rect class="a-panel" x="24" y="26" width="128" height="98" rx="12"/><path class="a-arrow" d="M64 50h18l7 8h23v30H64z"/><text class="a-t" x="88" y="110" text-anchor="middle">내 컴퓨터의 폴더</text>' +
+    '<rect class="a-panel" x="168" y="26" width="128" height="98" rx="12"/><path class="a-arrow" d="M220 52v36M220 70c0-10 22-6 22-18"/><circle class="a-ink" cx="220" cy="50" r="4.5"/><circle class="a-ink" cx="220" cy="90" r="4.5"/><circle class="a-acc" cx="242" cy="50" r="4.5"/><text class="a-t" x="232" y="110" text-anchor="middle">GitHub 저장소</text>',
+  plan: BG +
+    '<rect class="a-ink" x="170" y="14" width="130" height="26" rx="13"/><text class="a-tp" x="235" y="31" text-anchor="middle">로그인 버튼 만들어 줘</text>' +
+    '<rect class="a-panel" x="22" y="50" width="214" height="86" rx="10"/><rect class="a-acc" x="22" y="50" width="4" height="86"/>' +
+    '<rect class="a-acc" x="36" y="60" width="30" height="16" rx="5" style="opacity:.18"/><text class="a-acc" x="51" y="72" text-anchor="middle" style="font-size:9.5px">계획</text>' +
+    '<rect class="a-bar" x="36" y="84" width="170" height="6" rx="3"/><rect class="a-bar" x="36" y="96" width="130" height="6" rx="3"/>' +
+    '<rect class="a-ink" x="36" y="112" width="84" height="18" rx="6"/><text class="a-tp" x="78" y="125" text-anchor="middle" style="font-size:9.5px">계획대로 실행</text>' +
+    '<rect class="a-out" x="126" y="112" width="40" height="18" rx="6"/><text class="a-t" x="146" y="125" text-anchor="middle" style="font-size:9.5px">취소</text>',
+  result: BG +
+    '<rect class="a-panel" x="22" y="18" width="276" height="114" rx="10"/><rect class="a-ok" x="22" y="18" width="4" height="114"/>' +
+    '<rect class="a-ok" x="36" y="28" width="48" height="16" rx="5" style="opacity:.18"/><text class="a-t" x="60" y="40" text-anchor="middle" style="font-size:9.5px">작업 결과</text>' +
+    '<rect class="a-term" x="36" y="52" width="170" height="44" rx="8"/><text class="a-tg mono" x="46" y="70" style="font-size:10px">M  index.html</text><text class="a-tg mono" x="46" y="86" style="font-size:10px">A  login.js</text>' +
+    '<rect class="a-ink" x="36" y="104" width="96" height="20" rx="7"/><text class="a-tp" x="84" y="118" text-anchor="middle" style="font-size:9.5px">GitHub에 올리기</text>',
+  safe: BG +
+    '<rect class="a-panel" x="24" y="26" width="128" height="98" rx="12"/><rect class="a-ink" x="72" y="62" width="32" height="26" rx="5"/><path class="a-arrow" d="M79 62v-8a9 9 0 0 1 18 0v8"/><text class="a-t" x="88" y="110" text-anchor="middle">작업 키로 확인</text>' +
+    '<rect class="a-panel" x="168" y="26" width="128" height="98" rx="12"/><rect class="a-term" x="204" y="48" width="56" height="38" rx="8"/><text class="a-tt mono" x="216" y="72" style="font-size:14px">&gt;_</text><path d="M198 92l68-50" stroke="var(--danger)" stroke-width="3.5" stroke-linecap="round"/><text class="a-t" x="232" y="110" text-anchor="middle">명령 실행 없음</text>',
+  // 친구
+  addfriend: BG +
+    '<rect class="a-panel" x="40" y="24" width="196" height="30" rx="9"/><text class="a-t2" x="52" y="43">친구 아이디 입력 후 Enter</text>' +
+    '<rect class="a-ink" x="244" y="24" width="34" height="30" rx="9"/><text class="a-tp" x="261" y="45" text-anchor="middle" style="font-size:17px">+</text>' +
+    '<circle class="a-real" cx="56" cy="84" r="13"/><text class="a-tw" x="56" y="88" text-anchor="middle">민</text><text class="a-t" x="78" y="82">민수</text><text class="a-t2" x="78" y="96" style="font-size:9.5px">@minsu</text>' +
+    '<rect class="a-anon" x="43" y="108" width="26" height="26" rx="8"/><text class="a-tw" x="56" y="125" text-anchor="middle">C</text><text class="a-t" x="78" y="119">Claude</text><text class="a-t2" x="78" y="133" style="font-size:9.5px">@claude</text><rect class="a-ink" x="120" y="109" width="22" height="14" rx="4"/><text class="a-tp mono" x="131" y="119" text-anchor="middle" style="font-size:8.5px">AI</text>',
+  invitefriend: BG +
+    '<rect class="a-panel" x="24" y="20" width="272" height="110" rx="12"/><text class="a-t" x="40" y="42">방에 친구 초대</text>' +
+    '<circle class="a-real" cx="52" cy="70" r="12"/><text class="a-tw" x="52" y="74" text-anchor="middle">민</text><text class="a-t" x="72" y="74">민수</text><rect class="a-ink" x="226" y="59" width="54" height="22" rx="7"/><text class="a-tp" x="253" y="74" text-anchor="middle" style="font-size:10px">+ 초대</text>' +
+    '<rect class="a-anon" x="40" y="94" width="24" height="24" rx="7"/><text class="a-tw" x="52" y="110" text-anchor="middle">C</text><text class="a-t" x="72" y="110">Claude</text><rect class="a-ink" x="226" y="95" width="54" height="22" rx="7"/><text class="a-tp" x="253" y="110" text-anchor="middle" style="font-size:10px">+ 초대</text>',
+};
+function art(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 320 150');
   svg.setAttribute('class', 'art');
   svg.setAttribute('aria-hidden', 'true');
-  svg.innerHTML = HELP_ART[i];   // 위에 적어 둔 고정된 그림만 들어간다
+  svg.innerHTML = HELP_ART[name];   // 위에 적어 둔 고정된 그림만 들어간다
   return svg;
 }
-// 사용법: 옆으로 넘겨 보는 5장 (버튼·점·← → 키·밀기)
-function openHelp() {
-  const pages = [
-    ['AI와 함께하는 채팅방이에요', [
-      '사람과 터미널용 AI(Claude Code · Antigravity · GitHub Copilot)가 한 방에서 대화합니다.',
-      '사람끼리 대화만 할 때는 이 화면만 있으면 됩니다.',
+// 설명서 내용: 주제마다 옆으로 넘겨 보는 쪽들 [그림, 제목, 항목들]
+function manual() {
+  const code = (text) => h('code', null, text);
+  return {
+    basic: ['기본 사용법', [
+      ['chat', 'AI와 함께하는 채팅방이에요', [
+        '사람과 터미널용 AI(Claude Code · Antigravity · GitHub Copilot)가 한 방에서 대화합니다.',
+        '사람끼리 대화만 할 때는 이 화면만 있으면 됩니다.',
+      ]],
+      ['need', 'AI를 넣으려면 준비물 세 가지', [
+        [h('strong', null, '파이썬'), ' 이 깔려 있어야 합니다. (python.org 에서 설치)'],
+        [h('strong', null, '터미널용 AI'), ' 가 깔려 있고 로그인되어 있어야 합니다. 터미널에서 ', code('claude'), ' · ', code('agy'), ' · ', code('copilot'), ' 중 하나가 실행되면 됩니다.'],
+        [h('strong', null, 'ai_agent.py'), ' 파일이 있어야 합니다. ', h('a', { href: REPO_URL, target: '_blank', rel: 'noopener noreferrer' }, 'GitHub 에서 받기')],
+      ]],
+      ['invite', '방을 만들고 명령을 복사해요', [
+        '「방 만들기」로 방을 만듭니다. (익명방 · AI 이름방 · 가명방)',
+        '오른쪽 「대화방 정보 → AI 초대하기」에 나오는 명령을 복사합니다.',
+      ]],
+      ['cmd', 'CMD 창에 붙여 넣어요', [
+        'CMD(터미널) 창에 붙여 넣고 Enter 를 누릅니다.',
+        '처음에는 AI 계정의 비밀번호(6자 이상)를 정합니다.',
+        '「대화를 기다리는 중…」이 나오면 방에서 말을 걸어 보세요.',
+      ]],
+      ['tips', '알아 둘 점', [
+        'AI는 그 CMD 창이 켜져 있는 동안만 대답합니다. AI를 켠 사람의 컴퓨터와 사용량으로 돌아갑니다.',
+        ['다른 사람이 쓰는 AI 아이디와 겹치면 명령 뒤에 ', code('--id 내아이디'), ' 를 붙이세요.'],
+        'AI끼리 대화가 길어지면 대화방 정보의 「AI 응답 일시정지」로 멈출 수 있습니다.',
+        '이 설명서는 왼쪽 아래 물음표(?) 버튼으로 다시 볼 수 있습니다.',
+      ]],
     ]],
-    ['AI를 넣으려면 준비물 세 가지', [
-      [h('strong', null, '파이썬'), ' 이 깔려 있어야 합니다. (python.org 에서 설치)'],
-      [h('strong', null, '터미널용 AI'), ' 가 깔려 있고 로그인되어 있어야 합니다. 터미널에서 ', h('code', null, 'claude'), ' · ', h('code', null, 'agy'), ' · ', h('code', null, 'copilot'), ' 중 하나가 실행되면 됩니다.'],
-      [h('strong', null, 'ai_agent.py'), ' 파일이 있어야 합니다. ', h('a', { href: REPO_URL, target: '_blank', rel: 'noopener noreferrer' }, 'GitHub 에서 받기')],
+    coding: ['코딩방', [
+      ['project', '코딩방을 만들고 프로젝트를 연결해요', [
+        '「방 만들기 → 코딩방」을 고릅니다. AI가 내 코드를 직접 고치는 방입니다.',
+        '대화방 정보의 「코딩할 AI 부르기」에서 「폴더 선택」으로 내 컴퓨터의 폴더를 고르거나, 「GitHub 연결」로 저장소를 고릅니다.',
+        '나온 명령을 CMD 창에 붙여 넣으면 AI가 그 프로젝트를 맡습니다.',
+        'AI를 여러 개 넣어도 됩니다. 개수를 늘리거나, 다른 AI로 한 번 더 부르세요.',
+      ]],
+      ['plan', '할 일을 적으면 계획부터 보여 줘요', [
+        '만들거나 고칠 것을 채팅으로 적으면, AI가 코드를 읽고 계획을 올립니다. 이때는 파일을 고치지 않습니다.',
+        'AI가 여럿이면 각자 계획을 냅니다. 비교해 보고 마음에 드는 계획을 고르세요.',
+        '계획을 바꾸고 싶으면 의견을 적으면 다시 세웁니다. 그만두려면 「취소」.',
+      ]],
+      ['result', '승인하면 파일을 고쳐요', [
+        '「계획대로 실행」을 누르면 그 계획을 낸 AI만 파일을 고칩니다.',
+        '끝나면 무엇을 바꿨는지와 바뀐 파일을 알려 줍니다.',
+        ['GitHub 저장소는 ', code('ai-talk-work'), ' 브랜치에 커밋하고, 「GitHub에 올리기」를 눌러야 올라갑니다. main 은 건드리지 않습니다.'],
+      ]],
+      ['safe', '안전하게 쓰기', [
+        ['명령에 들어 있는 ', code('--key'), ' 는 이 방의 작업 키입니다. 이 브라우저에서 보낸 지시만 AI가 따르니, 명령을 남에게 보여 주지 마세요.'],
+        'AI는 파일을 읽고 고치기만 합니다. 프로그램 실행·설치는 하지 않고, 연결한 폴더 밖은 건드리지 못합니다.',
+        '내 폴더를 맡길 때는 복사본을 두거나 git 으로 관리하세요. 되돌리기 기능은 따로 없습니다.',
+        '코딩방 위쪽의 물음표(?) 버튼으로 이 설명서를 다시 볼 수 있습니다.',
+      ]],
     ]],
-    ['방을 만들고 명령을 복사해요', [
-      '「방 만들기」로 방을 만듭니다. (익명방 · AI 이름방 · 가명방)',
-      '오른쪽 「대화방 정보 → AI 초대하기」에 나오는 명령을 복사합니다.',
+    friends: ['친구', [
+      ['addfriend', '친구를 추가해요', [
+        '왼쪽 아래 「친구」 칸에 상대의 아이디를 치고 Enter 를 누르면 바로 친구가 됩니다.',
+        ['내 아이디는 왼쪽 맨 아래 내 이름 밑의 ', code('@아이디'), ' 입니다.'],
+        'AI도 친구로 추가할 수 있습니다. (AI 계정 아이디: claude, copilot …)',
+        '대화방의 참가자 목록에서 사람+ 버튼으로도 추가할 수 있습니다.',
+      ]],
+      ['invitefriend', '친구를 방에 초대해요', [
+        '대화방 위쪽의 사람+ 버튼을 누르면 친구를 그 방에 바로 초대할 수 있습니다. 초대코드가 필요 없습니다.',
+        '방을 만들 때 「함께 초대할 친구」에서 미리 골라도 됩니다.',
+        '친구 목록의 + 버튼은 그 친구를 초대할 방을 고르고, 말풍선 버튼은 1:1 대화를 엽니다.',
+        'AI 친구는 그 AI의 CMD 창이 켜져 있어야 대답합니다.',
+      ]],
     ]],
-    ['CMD 창에 붙여 넣어요', [
-      'CMD(터미널) 창에 붙여 넣고 Enter 를 누릅니다.',
-      '처음에는 AI 계정의 비밀번호(6자 이상)를 정합니다.',
-      '「대화를 기다리는 중…」이 나오면 방에서 말을 걸어 보세요.',
-    ]],
-    ['알아 둘 점', [
-      'AI는 그 CMD 창이 켜져 있는 동안만 대답합니다. AI를 켠 사람의 컴퓨터와 사용량으로 돌아갑니다.',
-      ['다른 사람이 쓰는 AI 아이디와 겹치면 명령 뒤에 ', h('code', null, '--id 내아이디'), ' 를 붙이세요.'],
-      'AI끼리 대화가 길어지면 대화방 정보의 「AI 응답 일시정지」로 멈출 수 있습니다.',
-      '이 사용법은 왼쪽 아래 물음표(?) 버튼으로 다시 볼 수 있습니다.',
-    ]],
-  ];
-  const last = pages.length - 1;
+  };
+}
+// 설명서: 위에서 주제를 고르고, 옆으로 넘겨 본다 (버튼·점·← → 키·밀기)
+function openHelp(topic = 'basic') {
+  const book = manual();
+  if (!book[topic]) topic = 'basic';
+  let go = () => {};
   let at = 0;
-  const track = h('div', { class: 'slide-track' }, pages.map(([title, items], i) =>
-    h('div', { class: 'slide' }, art(i), h('h4', null, title), h('ul', null, items.map((item) => h('li', null, item))))));
-  const view = h('div', { class: 'slides' }, track);
-  const prev = h('button', { type: 'button', class: 'btn', onclick: () => go(at - 1) }, '이전');
-  const next = h('button', { type: 'button', class: 'btn primary', onclick: () => (at === last ? closeModal() : go(at + 1)) }, '다음');
-  const pager = h('div', { class: 'pager' }, pages.map((_, i) => h('button', { type: 'button', 'aria-label': `${i + 1}쪽`, onclick: () => go(i) })));
-  function go(i) {
-    at = Math.max(0, Math.min(last, i));
-    track.style.transform = `translateX(calc(${-at} * (100% + 24px)))`;   // 24px 은 쪽 사이 간격
-    prev.style.visibility = at ? 'visible' : 'hidden';
-    next.textContent = at === last ? '시작하기' : '다음';
-    [...pager.children].forEach((dot, n) => dot.classList.toggle('on', n === at));
-    [...track.children].forEach((slide, n) => { slide.inert = n !== at; });   // 안 보이는 쪽의 링크에는 포커스가 가지 않게
+  const tabs = h('div', { class: 'seg' });
+  const stage = h('div');
+  function show(key) {
+    topic = key;
+    tabs.replaceChildren(...Object.entries(book).map(([k, [title]]) =>
+      h('button', { type: 'button', class: k === key ? 'on' : '', onclick: () => show(k) }, title)));
+    const pages = book[key][1];
+    const last = pages.length - 1;
+    const track = h('div', { class: 'slide-track' }, pages.map(([pic, title, items]) =>
+      h('div', { class: 'slide' }, art(pic), h('h4', null, title), h('ul', null, items.map((item) => h('li', null, item))))));
+    const view = h('div', { class: 'slides' }, track);
+    const prev = h('button', { type: 'button', class: 'btn', onclick: () => go(at - 1) }, '이전');
+    const next = h('button', { type: 'button', class: 'btn primary', onclick: () => (at === last ? closeModal() : go(at + 1)) }, '다음');
+    const pager = h('div', { class: 'pager' }, pages.map((_, i) => h('button', { type: 'button', 'aria-label': `${i + 1}쪽`, onclick: () => go(i) })));
+    go = (i) => {
+      at = Math.max(0, Math.min(last, i));
+      track.style.transform = `translateX(calc(${-at} * (100% + 24px)))`;   // 24px 은 쪽 사이 간격
+      prev.style.visibility = at ? 'visible' : 'hidden';
+      next.textContent = at === last ? '닫기' : '다음';
+      [...pager.children].forEach((dot, n) => dot.classList.toggle('on', n === at));
+      [...track.children].forEach((slide, n) => { slide.inert = n !== at; });   // 안 보이는 쪽의 링크에는 포커스가 가지 않게
+    };
+    let downX = null;   // 손가락·마우스로 옆으로 밀어서 넘기기
+    view.addEventListener('pointerdown', (e) => { downX = e.clientX; });
+    view.addEventListener('pointerup', (e) => {
+      if (downX == null) return;
+      const dx = e.clientX - downX;
+      downX = null;
+      if (Math.abs(dx) > 40) go(at + (dx < 0 ? 1 : -1));
+    });
+    view.addEventListener('pointercancel', () => { downX = null; });
+    stage.replaceChildren(view, h('div', { class: 'slide-nav' }, prev, pager, next));
+    go(0);
+    next.focus();
   }
-  let downX = null;   // 손가락·마우스로 옆으로 밀어서 넘기기
-  view.addEventListener('pointerdown', (e) => { downX = e.clientX; });
-  view.addEventListener('pointerup', (e) => {
-    if (downX == null) return;
-    const dx = e.clientX - downX;
-    downX = null;
-    if (Math.abs(dx) > 40) go(at + (dx < 0 ? 1 : -1));
-  });
-  view.addEventListener('pointercancel', () => { downX = null; });
   const box = h('div', { class: 'help', tabindex: -1, onkeydown: (e) => {
     if (e.key === 'ArrowRight') go(at + 1);
     else if (e.key === 'ArrowLeft') go(at - 1);
-  } }, view, h('div', { class: 'slide-nav' }, prev, pager, next));
-  go(0);
-  openModal('AI Talk 사용법', box, next);
+  } }, tabs, stage);
+  openModal('AI Talk 설명서', box);
+  show(topic);
 }
 function choiceGroup(options, value, onchange, cls) {
   const wrap = h('div', { class: 'choices' + (cls ? ' ' + cls : '') });
@@ -1868,6 +2073,8 @@ function formError(el, err) {
 
 function openCreate() {
   const st = { kind: 'open', mode: 'anonymous' };
+  const friends = Object.entries(S.friends);
+  const picked = new Set();
   const name = h('input', { type: 'text', maxlength: 40, placeholder: '예: AI 수다방', required: true });
   const alias = h('input', { type: 'text', maxlength: 20, placeholder: '비워 두면 자동으로 지어 줘요' });
   const aliasRow = h('label', { class: 'field', hidden: true }, h('span', null, '이 방에서 쓸 내 가명'), alias);
@@ -1881,6 +2088,7 @@ function openCreate() {
     submit.disabled = true;
     try {
       const id = await createRoom(name.value, st.kind, st.mode, alias.value);
+      for (const uid of picked) await inviteFriend(id, uid).catch(fail);   // 고른 친구들을 바로 초대
       closeModal();
       S.infoOpen = true;
       openRoom(id);
@@ -1898,7 +2106,17 @@ function openCreate() {
       { value: 'coding', icon: 'code', title: '코딩방', desc: 'AI가 내 코드를 고쳐요' },
     ], st.kind, (v) => { st.kind = v; modeField.hidden = v === 'coding'; aliasRow.hidden = v === 'coding' || st.mode !== 'alias'; }, 'three')),
     modeField,
-    aliasRow, err,
+    aliasRow,
+    friends.length ? h('div', { class: 'field' }, h('span', null, '함께 초대할 친구 (선택)'), h('div', { class: 'picks' }, friends.map(([uid, f]) => {
+      const chip = h('button', { type: 'button', class: 'pick', 'aria-pressed': 'false', onclick: () => {
+        const on = !picked.has(uid);
+        if (on) picked.add(uid); else picked.delete(uid);
+        chip.classList.toggle('on', on);
+        chip.setAttribute('aria-pressed', String(on));
+      } }, String(f.name || '?'), f.kind === 'ai' ? h('span', { class: 'tag' }, 'AI') : null);
+      return chip;
+    }))) : null,
+    err,
     h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'btn', onclick: closeModal }, '취소'), submit));
   openModal('새 대화방 만들기', form, name);
 }
@@ -1948,7 +2166,9 @@ $('#tab-register').addEventListener('click', () => setAuthMode('register'));
 $('#auth-form').addEventListener('submit', submitAuth);
 $('#google-btn').addEventListener('click', googleLogin);
 $('#logout-btn').addEventListener('click', logout);
-$('#help-btn').addEventListener('click', openHelp);
+$('#help-btn').addEventListener('click', () => openHelp());
+$('#guide-btn').addEventListener('click', () => openHelp('coding'));
+$('#invite-btn').addEventListener('click', () => { if (S.cur != null) openInvite(S.cur); });
 $('#friend-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const input = $('#friend-input');

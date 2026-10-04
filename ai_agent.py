@@ -491,7 +491,8 @@ def sorted_messages(data, mid):
         kind = m.get("kind") if m.get("kind") in ("human", "ai") else "system"
         out.append({"id": key, "kind": kind, "name": str(m.get("name") or ""), "mine": m.get("m") == mid,
                     "text": str(m.get("text") or ""), "ts": (m.get("ts") or 0) / 1000,
-                    "act": str(m.get("act") or ""), "sig": m.get("sig"), "nonce": m.get("nonce"), "t": m.get("t")})
+                    "act": str(m.get("act") or ""), "to": str(m.get("to") or ""),
+                    "sig": m.get("sig"), "nonce": m.get("nonce"), "t": m.get("t")})
     return out
 
 
@@ -757,7 +758,8 @@ class Agent:
         if nonce in self.nonces or abs(self.fb.now() - t) > ORDER_MAX_AGE_MS:
             return False
         want = hmac.new(self.key.encode("utf-8"),
-                        f"{rid}\n{m['act']}\n{nonce}\n{t}\n{m['text']}".encode("utf-8"), hashlib.sha256).hexdigest()
+                        f"{rid}\n{m['act']}\n{m['to']}\n{nonce}\n{t}\n{m['text']}".encode("utf-8"),
+                        hashlib.sha256).hexdigest()
         return hmac.compare_digest(want, sig)
 
     def git(self, *args, timeout=120):
@@ -769,13 +771,15 @@ class Agent:
         except (OSError, subprocess.TimeoutExpired) as e:
             return False, str(e)
 
-    def say(self, rid, mid, label, text, msgs, flag=None):
-        """코딩방에 메시지를 올린다. flag 가 plan/push 이면 화면에 승인 버튼이 붙는다."""
+    def say(self, rid, mid, label, text, msgs, flag=None, card=None):
+        """코딩방에 메시지를 올린다. flag 가 plan/push 이면 화면에 승인 버튼이 붙고,
+        card 가 plan/result 이면 화면에서 계획·결과 카드로 보인다."""
         fb = self.fb
         text = text.strip() or "(출력 없음)"
         if len(text) > MAX_TEXT:
             text = text[:MAX_TEXT - 1] + "…"
-        key = fb.db("POST", f"messages/{rid}", {"m": mid, "name": label, "kind": "ai", "text": text, "ts": SV})["name"]
+        key = fb.db("POST", f"messages/{rid}", {"m": mid, "name": label, "kind": "ai", "text": text, "ts": SV,
+                                                 "card": card})["name"]
         n = int((fb.get(f"rooms/{rid}/last") or {}).get("n") or 0) + 1
         fb.update({
             f"rooms/{rid}/last": {"key": key, "name": label, "kind": "ai", "text": text[:120], "ts": SV, "n": n},
@@ -818,7 +822,9 @@ class Agent:
     def handle_code(self, rid, mid, raw, msgs, read):
         fb = self.fb
         fresh = [m for m in msgs if m["id"] > read and not m["mine"] and m["kind"] == "human"]
-        orders = [m for m in fresh if self.verified(rid, m)]
+        # 새 요청·수정 의견은 방의 모든 코딩 AI가 받고, 실행·취소·올리기는 지목된 AI만 받는다
+        orders = [m for m in fresh if self.verified(rid, m)
+                  and (m["to"] == mid if m["act"] else m["to"] in ("", mid))]
         if not orders or raw["meta"].get("ai_paused"):
             return self.mark_read(rid, mid, raw, msgs)
         if self.busy(raw.get("typing"), mid):
@@ -851,7 +857,7 @@ class Agent:
                         "끝나면 무엇을 어떻게 바꿨는지 짧게 요약하세요."), tick, mode="run", cwd=folder)
                     self.jobs.pop(rid, None)
                     summary, pushable = self.changes(job["request"])
-                    self.say(rid, mid, label, out + "\n\n" + summary, msgs, "push" if pushable else None)
+                    self.say(rid, mid, label, out + "\n\n" + summary, msgs, "push" if pushable else None, "result")
                 else:   # 새 요청이거나, 기다리는 계획에 대한 수정 의견
                     request = job["request"] if job else order["text"]
                     prompt = f"[요청]\n{request}\n\n"
@@ -863,7 +869,7 @@ class Agent:
                         "계획에는 (1) 바꿀 파일과 바꿀 내용 (2) 작업 순서 (3) 주의할 점을 짧게 담으세요."),
                         tick, mode="plan", cwd=folder)
                     self.jobs[rid] = {"request": request, "plan": out}
-                    self.say(rid, mid, label, out, msgs, "plan")
+                    self.say(rid, mid, label, out, msgs, "plan", "plan")
                 self.log(f"[{name}] {label}(나): 답을 올렸습니다.")
             except CliLoginError:
                 self.mark_read(rid, mid, raw, msgs)
@@ -1033,16 +1039,37 @@ def confirm_many(count, title, interactive):
         die("취소했습니다.")
 
 
+def pick_folder():
+    """이 컴퓨터에서 폴더 선택 창을 띄운다. 고르지 않으면 빈 문자열."""
+    try:
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)   # 다른 창 뒤에 숨지 않게
+        path = filedialog.askdirectory(title="AI가 고칠 프로젝트 폴더를 고르세요", mustexist=True)
+        root.destroy()
+        return os.path.normpath(path) if path else ""
+    except Exception:
+        return ""
+
+
 def setup_work(project, github, data_dir):
     """코딩방에서 AI가 작업할 폴더를 준비한다. 내 폴더(--project) 또는 GitHub 저장소(--github)."""
     if project and github:
         die("--project 와 --github 는 하나만 쓸 수 있습니다.")
+    if project and project.strip('"') == "?":   # 화면에서 폴더를 못 고른 경우(배포된 사이트): 여기서 창을 띄운다
+        log("프로젝트 폴더를 고르는 창을 띄웁니다…")
+        project = pick_folder() or die("폴더를 고르지 않아 종료합니다.")
     if project:
         path = os.path.abspath(os.path.expanduser(project.strip('"')))
         if not os.path.isdir(path):
             die(f"프로젝트 폴더를 찾을 수 없습니다: {path}")
         return {"dir": path, "name": os.path.basename(path.rstrip("\\/")) or path, "source": "local"}
-    m = GITHUB_RE.match(github.strip())
+    github = github.strip()
+    if re.match(r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$", github):   # '아이디/저장소' 만 적어도 된다
+        github = "https://github.com/" + github
+    m = GITHUB_RE.match(github)
     if not m:
         die("GitHub 주소는 https://github.com/사용자/저장소 모양이어야 합니다.")
     repo = f"{m.group(1)}/{m.group(2)}"
@@ -1194,8 +1221,6 @@ def main():
     if args.project or args.github:   # 코딩방: 프로젝트 준비
         if not cli.code:
             die(f"{cli.title} 은(는) 코딩방을 지원하지 않습니다. claude, agy, copilot 중에서 골라 주세요.")
-        if count > 1:
-            die("코딩방에는 AI를 하나씩만 넣을 수 있습니다. (--count 는 빼 주세요)")
         if len(args.key) < 16:
             die("코딩방에는 작업 키(--key)가 필요합니다. 대화방 정보의 'AI 초대하기' 명령을 그대로 복사해 주세요.")
         work = setup_work(args.project, args.github, args.data)
@@ -1203,6 +1228,8 @@ def main():
         print("=" * 60)
         print("  코딩방: 이 AI는 아래 폴더의 파일을 고칠 수 있습니다.")
         print(f"  폴더: {work['dir']}")
+        if count > 1:
+            print(f"  - AI {count}개가 같은 폴더를 맡습니다. 각자 계획을 내고, 승인한 AI만 파일을 고칩니다.")
         print("  - 작업 키로 보낸 지시만 따르고, 계획을 승인해야 파일을 고칩니다.")
         print("  - 명령 실행은 하지 않고, 이 폴더 밖의 파일은 건드리지 않습니다.")
         print("=" * 60)

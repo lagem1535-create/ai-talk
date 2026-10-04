@@ -27,6 +27,24 @@ CONFIG_PATH = os.path.join(BASE_DIR, "firebase-config.json")
 DEFAULT_PORT = 8765
 
 
+def pick_folder():
+    """이 컴퓨터에서 폴더 선택 창을 띄운다. 고르지 않으면 빈 문자열."""
+    try:
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)   # 다른 창 뒤에 숨지 않게
+        path = filedialog.askdirectory(title="AI가 고칠 프로젝트 폴더를 고르세요", mustexist=True)
+        root.destroy()
+        return os.path.normpath(path) if path else ""
+    except Exception:
+        return ""
+
+
+PICK_LOCK = threading.Lock()   # 폴더 선택 창은 한 번에 하나만
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
@@ -49,6 +67,17 @@ class Handler(BaseHTTPRequestHandler):
         # 화면이 'AI 초대 명령'에 이 폴더의 경로를 넣어 보여 줄 수 있게 알려 준다
         page = page.replace(b"__APP_DIR__", json.dumps(BASE_DIR)[1:-1].encode("utf-8"))
         self.reply(200, page, "text/html; charset=utf-8")
+
+    def do_POST(self):
+        """화면의 '폴더 선택' 버튼: 이 컴퓨터에 폴더 선택 창을 띄우고 고른 경로를 돌려준다."""
+        host = (self.headers.get("Host") or "").lower()
+        origin = (self.headers.get("Origin") or "").lower()
+        local = host.split(":")[0] in ("localhost", "127.0.0.1")
+        if self.path != "/pick-folder" or not local or origin not in (f"http://{host}", ""):
+            return self.reply(404, b"not found", "text/plain; charset=utf-8")   # 다른 사이트가 부르는 것은 받지 않는다
+        with PICK_LOCK:
+            path = pick_folder()
+        self.reply(200, json.dumps({"path": path}).encode("utf-8"), "application/json; charset=utf-8")
 
     def reply(self, status, body, ctype):
         self.send_response(status)
