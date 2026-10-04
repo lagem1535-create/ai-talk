@@ -263,6 +263,19 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .bubble.card.result { border-left-color: var(--ok); }
 .card-tag { display: inline-block; margin-bottom: 6px; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 700; }
 .card.result .card-tag { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.steps-box { margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; overflow: hidden; }
+.steps-box summary { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; color: var(--ink-2); font-weight: 600; list-style: none; }
+.steps-box summary::-webkit-details-marker { display: none; }
+.steps-box summary::after { content: "▾"; margin-left: auto; color: var(--ink-3); }
+.steps-box[open] summary::after { content: "▴"; }
+.stat { padding: 1px 6px; border-radius: 6px; font: 600 11.5px var(--mono); }
+.stat.add { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.stat.del { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.step { display: flex; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); }
+.step b { flex: none; width: 46px; font-weight: 600; color: var(--ink-3); }
+.step span { min-width: 0; overflow-wrap: anywhere; }
+.step.cmd span, .step.file span { font: 12.5px var(--mono); }
+.step.note span { color: var(--ink-2); }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .pick { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; font-weight: 600; }
 .pick.on { border-color: var(--ink); background: var(--panel-2); }
@@ -959,6 +972,7 @@ function viewRoom(id) {
     me: { mid, label: String(mine.label || '?'), read: mine.read || '' },
     members,
     typing: Object.entries(raw.typing || {}).filter(([k, v]) => k !== mid && v && v.label && t - (v.at || 0) < TYPING_MS).map(([, v]) => String(v.label)),
+    doing: String((Object.values(raw.typing || {}).find((v) => v && v.doing && t - (v.at || 0) < TYPING_MS) || {}).doing || ''),   // 코딩 중인 AI가 지금 하는 일
   };
 }
 let refreshQueued = false;
@@ -1429,7 +1443,7 @@ function renderChrome(room) {
 
   // 상태 줄: 누가 입력 중인지, 아니면 지금 왜 조용한지 알려 준다
   let line = '';
-  if (room.typing.length) line = 'T' + room.typing.join(', ');
+  if (room.typing.length) line = 'T' + room.typing.join(', ') + (room.doing ? '\n' + room.doing : '');
   else if (room.ai_paused) line = '';
   else if (room.coding && ais.length && !codeKey(room.id)) line = 'H이 브라우저에는 이 방의 작업 키가 없어서 코딩을 시킬 수 없어요. 대화방 정보의 명령으로 AI를 다시 불러 주세요.';
   else if (!ais.length) line = room.code ? 'H아직 AI가 없어요. 대화방 정보에서 초대코드를 복사해 AI에게 전해 주세요.' : '';
@@ -1439,7 +1453,7 @@ function renderChrome(room) {
   if (status.dataset.sig !== line) {
     status.dataset.sig = line;
     if (!line) status.replaceChildren();
-    else if (line[0] === 'T') status.replaceChildren(h('div', { class: 'typing' }, h('span', { class: 'dots' }, h('i'), h('i'), h('i')), `${line.slice(1)} 님이 입력 중`));
+    else if (line[0] === 'T') status.replaceChildren(h('div', { class: 'typing' }, h('span', { class: 'dots' }, h('i'), h('i'), h('i')), line.includes('\n') ? `${line.slice(1).split('\n')[0]} 님이 작업 중 · ${line.split('\n')[1]}` : `${line.slice(1)} 님이 입력 중`));
     else status.replaceChildren(line.slice(1));
   }
   if (S.infoOpen) renderInfo(room);
@@ -1705,6 +1719,8 @@ function toMessage(id, key, m) {   // 데이터베이스의 메시지를 화면�
     id: key, kind, mid: m.m || null, name: String(m.name || ''), mine: !!m.m && m.m === S.mine[id],
     text: String(m.text == null ? '' : m.text), ts: Number(m.ts) || now(),
     card: m.card === 'plan' || m.card === 'result' ? m.card : '',   // 코딩방의 계획·작업 결과
+    steps: Array.isArray(m.steps) ? m.steps.filter((s) => s && s.k).map((s) => ({ k: String(s.k), t: String(s.t || '') })) : [],   // AI가 한 일
+    stat: m.stat && typeof m.stat === 'object' ? { add: Number(m.stat.add) || 0, del: Number(m.stat.del) || 0 } : null,
   };
 }
 function dayNode(ts) {
@@ -1716,6 +1732,7 @@ function msgNode(m, prev, fresh) {
   const bubble = h('div', { class: 'bubble' + (m.card ? ' card ' + m.card : ''), title: fullFmt.format(m.ts) });
   if (m.card) bubble.append(h('div', { class: 'card-tag' }, m.card === 'plan' ? '계획' : '작업 결과'));
   renderText(bubble, m.text);
+  if (m.steps.length || m.stat) bubble.append(stepsBox(m));
   const row = h('div', { class: 'brow' }, bubble, cont ? null : h('time', null, timeFmt.format(m.ts)));
   const cls = 'msg' + (m.mine ? ' mine' : '') + (cont ? ' cont' : '') + (fresh ? ' new' : '');
   if (m.mine) return h('div', { class: cls }, row);
@@ -1725,6 +1742,20 @@ function msgNode(m, prev, fresh) {
       cont ? null : h('div', { class: 'meta' }, h('span', null, m.name), m.kind === 'ai' ? h('span', { class: 'tag' }, 'AI') : null),
       row,
       m.kind === 'ai' ? h('div', { class: 'acts', 'data-key': m.id, 'data-mid': m.mid || '', hidden: true }) : null));
+}
+// 코딩방: AI가 무엇을 읽고, 고치고, 실행했는지 접었다 펼 수 있는 목록으로 보여 준다
+const STEP_KIND = { write: ['생성', 'file'], edit: ['수정', 'file'], read: ['읽음', 'file'], search: ['찾기', 'file'], cmd: ['명령', 'cmd'], note: ['생각', 'note'] };
+function stepsBox(m) {
+  const count = (k) => m.steps.filter((s) => s.k === k).length;
+  const parts = [['write', '생성된 파일'], ['edit', '수정된 파일'], ['cmd', '실행된 명령'], ['read', '읽은 파일']]
+    .filter(([k]) => count(k)).map(([k, name]) => `${name} ${count(k)}개`);
+  return h('details', { class: 'steps-box' },
+    h('summary', null, parts.join(', ') || '작업 내용',
+      m.stat ? [h('span', { class: 'stat add' }, '+' + m.stat.add), h('span', { class: 'stat del' }, '−' + m.stat.del)] : null),
+    m.steps.map((s) => {
+      const [name, cls] = STEP_KIND[s.k] || ['작업', 'note'];
+      return h('div', { class: 'step ' + cls }, h('b', null, name), h('span', null, s.t));
+    }));
 }
 // 코딩방: AI가 승인을 기다리는 메시지 아래에만 버튼을 보여 준다 (계획 → 실행/취소, 작업 완료 → GitHub 에 올리기)
 function renderActs(room) {
@@ -1739,7 +1770,14 @@ function renderActs(room) {
       sendText(room, text, name, box.dataset.mid).catch(fail);   // 이 계획을 낸 AI만 받는다
     } }, label);
     if (type === 'plan') box.replaceChildren(act('run', '계획대로 실행해 주세요.', '계획대로 실행', 'primary'), act('cancel', '이 계획은 취소할게요.', '취소'));
-    else if (type === 'push') box.replaceChildren(act('push', 'GitHub에 올려 주세요.', 'GitHub에 올리기', 'primary'));
+    else if (type === 'push' || type === 'merge') {
+      const merge = h('button', { type: 'button', class: 'btn small' + (type === 'merge' ? ' primary' : ''), onclick: async () => {
+        if (!(await confirmBox('main 에 합치기', 'AI가 작업한 브랜치(ai-talk-work)를 저장소의 기본 브랜치(main)에 합치고 GitHub 에 올립니다. 올라간 뒤에는 쉽게 되돌릴 수 없어요.', '합치고 올리기', true))) return;
+        box.hidden = true;
+        sendText(room, '기본 브랜치에 합쳐 주세요.', 'merge', box.dataset.mid).catch(fail);
+      } }, '기본 브랜치(main)에 합치기');
+      box.replaceChildren(...(type === 'push' ? [act('push', 'GitHub에 올려 주세요.', 'GitHub에 올리기', 'primary')] : []), merge);
+    }
     else box.replaceChildren();
   }
 }

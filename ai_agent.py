@@ -98,6 +98,7 @@ PRESETS = {
             "shell": ["-p", "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell", "--allowedTools", "Bash,PowerShell",
                       "--permission-mode", "acceptEdits", "--strict-mcp-config", "--no-session-persistence"],
             "system_flag": "--append-system-prompt",
+            "stream": True,   # 진행 과정(읽은 파일, 고친 파일, 실행한 명령)을 줄 단위로 알려 준다
         },
         "login_check": ["auth", "status"],   # 사용량을 쓰지 않고 로그인 상태만 확인하는 명령
         "login_hint": "새 창에서 claude 를 실행하고 /login 으로 로그인한 뒤 /exit 로 나오세요.",
@@ -338,6 +339,35 @@ def decode(data):
     return re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", text)   # 색상 등 터미널 제어 코드 제거
 
 
+def code_step(block, cwd):
+    """Claude Code 가 알려 주는 진행 내용 한 조각을 '한 일' 한 줄로 바꾼다. 보여 줄 것이 없으면 None."""
+    kind = block.get("type")
+    if kind == "text":
+        text = " ".join(str(block.get("text") or "").split())
+        return {"k": "note", "t": text[:300]} if text else None
+    if kind != "tool_use":
+        return None
+    name, arg = block.get("name"), block.get("input") or {}
+
+    def rel(path):   # 프로젝트 폴더 기준의 짧은 경로
+        try:
+            return os.path.relpath(str(path), cwd).replace("\\", "/")
+        except ValueError:
+            return str(path)
+
+    if name in ("Write", "Edit", "Read"):
+        return {"k": name.lower(), "t": rel(arg.get("file_path", ""))[:200]}
+    if name in ("Glob", "Grep"):
+        return {"k": "search", "t": str(arg.get("pattern", ""))[:200]}
+    if name in ("Bash", "PowerShell"):
+        return {"k": "cmd", "t": " ".join(str(arg.get("command", "")).split())[:240]}
+    return {"k": "note", "t": str(name)[:60]}
+
+
+STEP_TEXT = {"write": "파일 만드는 중", "edit": "파일 고치는 중", "read": "파일 읽는 중", "search": "코드 찾는 중",
+             "cmd": "명령 실행 중", "note": "생각하는 중"}
+
+
 class Cli:
     """AI CLI를 한 번 불러서 답을 받아 오는 실행기."""
 
@@ -434,6 +464,81 @@ class Cli:
             detail = (err or out or "출력 없음")[-400:]
             raise CliError(f"종료 코드 {proc.returncode}: {detail}")
         return out
+
+    def run_code(self, system, prompt, tick, mode, cwd, on_step=None):
+        """코딩방 작업을 실행한다. 반환: (마지막 답, 한 일 목록).
+        한 일 목록은 진행 과정을 알려 주는 CLI(Claude Code)에서만 채워진다."""
+        if not self.code.get("stream"):
+            return self.run(system, prompt, tick, mode=mode, cwd=cwd), []
+        argv, text = self.command(system, prompt, mode)
+        argv += ["--output-format", "stream-json", "--verbose"]
+        extra = {} if IS_WINDOWS else {"start_new_session": True}
+        try:
+            proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, **extra)
+        except OSError as e:
+            raise CliError(f"실행할 수 없습니다: {e}") from None
+        lines, errors = [], []
+        readers = [threading.Thread(target=lambda: lines.extend(iter(proc.stdout.readline, b"")), daemon=True),
+                   threading.Thread(target=lambda: errors.append(proc.stderr.read()), daemon=True)]
+        for r in readers:
+            r.start()
+        steps, final, seen = [], [""], 0
+        deadline, last_tick = time.time() + CODE_TIMEOUT, time.time()
+
+        def digest():   # 새로 나온 줄을 읽어 '한 일'로 정리한다
+            nonlocal seen
+            while seen < len(lines):
+                raw, seen = lines[seen], seen + 1
+                try:
+                    ev = json.loads(raw.decode("utf-8", errors="replace"))
+                except ValueError:
+                    continue
+                if isinstance(ev.get("result"), str):
+                    final[0] = ev["result"]
+                if ev.get("type") != "assistant":
+                    continue
+                for block in (ev.get("message") or {}).get("content") or []:
+                    step = code_step(block, cwd)
+                    if step:
+                        steps.append(step)
+                        if on_step:
+                            try:
+                                on_step(step)
+                            except Exception:
+                                pass
+
+        try:
+            proc.stdin.write(text.encode("utf-8"))
+            proc.stdin.close()
+            while proc.poll() is None:
+                time.sleep(0.5)
+                digest()
+                if time.time() >= deadline:
+                    kill_tree(proc)
+                    raise CliError(f"{CODE_TIMEOUT}초 안에 끝나지 않아 중단했습니다.")
+                if tick and time.time() - last_tick > 8:
+                    last_tick = time.time()
+                    try:
+                        tick()
+                    except Exception:
+                        pass
+            for r in readers:
+                r.join(timeout=5)
+            digest()
+        except BaseException:
+            if proc.poll() is None:
+                kill_tree(proc)
+            raise
+        err = decode(errors[0] if errors else b"").strip()
+        if proc.returncode != 0:
+            if AUTH_RE.search(final[0] + "\n" + err):
+                raise CliLoginError(f"{self.title} 로그인이 풀려 있습니다.")
+            raise CliError(f"종료 코드 {proc.returncode}: {(err or final[0] or '출력 없음')[-400:]}")
+        answer = final[0].strip() or next((s["t"] for s in reversed(steps) if s["k"] == "note"), "")
+        if steps and steps[-1]["k"] == "note":   # 마지막 설명은 답 본문과 같으므로 목록에서는 뺀다
+            steps.pop()
+        return answer, steps[-80:]
 
     def logged_in(self):
         """사용량을 쓰지 않는 명령으로 로그인 상태를 확인한다. 확인할 방법이 없으면 True."""
@@ -777,7 +882,7 @@ class Agent:
         except (OSError, subprocess.TimeoutExpired) as e:
             return False, str(e)
 
-    def say(self, rid, mid, label, text, msgs, flag=None, card=None):
+    def say(self, rid, mid, label, text, msgs, flag=None, card=None, steps=None, stat=None):
         """코딩방에 메시지를 올린다. flag 가 plan/push 이면 화면에 승인 버튼이 붙고,
         card 가 plan/result 이면 화면에서 계획·결과 카드로 보인다."""
         fb = self.fb
@@ -785,7 +890,7 @@ class Agent:
         if len(text) > MAX_TEXT:
             text = text[:MAX_TEXT - 1] + "…"
         key = fb.db("POST", f"messages/{rid}", {"m": mid, "name": label, "kind": "ai", "text": text, "ts": SV,
-                                                 "card": card})["name"]
+                                                 "card": card, "steps": steps or None, "stat": stat})["name"]
         n = int((fb.get(f"rooms/{rid}/last") or {}).get("n") or 0) + 1
         fb.update({
             f"rooms/{rid}/last": {"key": key, "name": label, "kind": "ai", "text": text[:120], "ts": SV, "n": n},
@@ -795,26 +900,65 @@ class Agent:
             f"rooms/{rid}/members/{mid}/pending": {"key": key, "type": flag} if flag else None,
         })
 
+    def numstat(self, *args):
+        """바뀐 줄 수를 센다. 반환: {"add": 더한 줄, "del": 뺀 줄, "files": 파일 수} 또는 None"""
+        ok, out = self.git("diff", "--numstat", *args)
+        rows = [line.split("\t") for line in out.splitlines()] if ok else []
+        rows = [r for r in rows if len(r) == 3]
+        if not rows:
+            return None
+        return {"add": sum(int(r[0]) for r in rows if r[0].isdigit()),
+                "del": sum(int(r[1]) for r in rows if r[1].isdigit()), "files": len(rows)}
+
     def changes(self, request):
-        """파일 수정이 끝난 뒤 무엇이 바뀌었는지 정리한다. 반환: (설명, GitHub 에 올릴 것이 생겼는지)"""
+        """작업이 끝난 뒤 무엇이 바뀌었는지 정리한다. 반환: (설명, GitHub 에 올릴 것이 생겼는지, 바뀐 줄 수)"""
         if not os.path.isdir(os.path.join(self.work["dir"], ".git")):
-            return "(이 폴더는 git 저장소가 아니어서 바뀐 파일 목록은 보여 드릴 수 없습니다)", False
+            return "(이 폴더는 git 저장소가 아니어서 바뀐 파일 목록은 보여 드릴 수 없습니다)", False, None
         ok, status = self.git("status", "--porcelain")
         if not ok:
-            return "", False
+            return "", False, None
         if not status:
-            return "바뀐 파일이 없습니다.", False
+            return "바뀐 파일이 없습니다.", False, None
         if self.work["source"] != "github":   # 내 폴더는 고치기만 하고 커밋은 하지 않는다
             lines = status.splitlines()
             more = f"\n… 외 {len(lines) - 30}개" if len(lines) > 30 else ""
-            return "바뀐 파일 (아직 커밋하지 않은 것):\n```\n" + "\n".join(lines[:30]) + more + "\n```", False
+            return ("바뀐 파일 (아직 커밋하지 않은 것):\n```\n" + "\n".join(lines[:30]) + more + "\n```",
+                    False, self.numstat("HEAD"))
         self.git("add", "-A")
+        stat = self.numstat("--cached")
         title = " ".join(request.split())[:60] or "AI Talk 작업"
         ok, out = self.git("commit", "-m", f"{title} (AI Talk)")
         if not ok:
-            return "커밋하지 못했습니다:\n```\n" + out[-400:] + "\n```", False
-        ok, stat = self.git("show", "--stat", "--format=", "HEAD")
-        return f"`{WORK_BRANCH}` 브랜치에 커밋했습니다:\n```\n{stat[-1500:]}\n```", True
+            return "커밋하지 못했습니다:\n```\n" + out[-400:] + "\n```", False, None
+        ok, shown = self.git("show", "--stat", "--format=", "HEAD")
+        return f"`{WORK_BRANCH}` 브랜치에 커밋했습니다:\n```\n{shown[-1500:]}\n```", True, stat
+
+    def merge(self):
+        """작업 브랜치를 기본 브랜치(main)에 합치고 GitHub 에 올린다."""
+        if self.work["source"] != "github":
+            return "GitHub 저장소로 연결했을 때만 합칠 수 있습니다. (--github 주소)", False
+        self.git("fetch", "origin", timeout=180)
+        ok, head = self.git("symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+        base = head.split("/", 1)[1] if ok and "/" in head else "main"
+        ok, out = self.git("checkout", base)
+        if not ok:
+            return f"`{base}` 브랜치로 바꾸지 못했습니다:\n```\n{out[-400:]}\n```", False
+        try:
+            self.git("merge", "--ff-only", f"origin/{base}")   # 그 사이 올라온 것을 먼저 받는다
+            ok, out = self.git("merge", "--no-ff", "-m", f"{WORK_BRANCH} 합치기 (AI Talk)", WORK_BRANCH)
+            if not ok:
+                self.git("merge", "--abort")
+                return (f"`{base}` 와 내용이 겹쳐서(충돌) 자동으로 합치지 못했습니다. 아무것도 바꾸지 않았습니다.\n"
+                        f"```\n{out[-500:]}\n```\nGitHub 에서 직접 확인해 주세요: "
+                        f"https://github.com/{self.work['repo']}/compare/{WORK_BRANCH}?expand=1"), False
+            ok, out = self.git("push", "origin", base, timeout=180)
+            if not ok:
+                self.git("reset", "--hard", f"origin/{base}")   # 올리지 못했으면 합친 것을 되돌린다
+                return f"`{base}` 에 올리지 못했습니다:\n```\n{out[-500:]}\n```", False
+        finally:
+            self.git("checkout", WORK_BRANCH)
+        self.git("merge", "--ff-only", base)   # 작업 브랜치도 최신으로 맞춘다
+        return f"`{WORK_BRANCH}` 를 `{base}` 에 합치고 GitHub 에 올렸습니다.\nhttps://github.com/{self.work['repo']}", True
 
     def push(self):
         if self.work["source"] != "github":
@@ -840,6 +984,11 @@ class Agent:
             return
         typing_path = f"rooms/{rid}/typing/{mid}"
         tick = lambda: fb.db("PATCH", typing_path, {"label": label, "kind": "ai", "at": SV})   # noqa: E731
+
+        def doing(step):   # 지금 무엇을 하는지 화면의 상태 줄에 보여 준다
+            fb.db("PATCH", typing_path, {"label": label, "kind": "ai", "at": SV,
+                                         "doing": f"{STEP_TEXT.get(step['k'], '작업 중')}: {step['t'][:80]}"})
+
         try:
             for m in orders:
                 self.nonces.add(m["nonce"])
@@ -852,35 +1001,40 @@ class Agent:
                     self.jobs.pop(rid, None)
                     self.say(rid, mid, label, "계획을 취소했습니다. 새로 요청해 주세요.", msgs)
                 elif act == "push":
-                    self.say(rid, mid, label, self.push(), msgs)
+                    text = self.push()
+                    self.say(rid, mid, label, text, msgs, "merge" if "compare/" in text else None)
+                elif act == "merge":
+                    self.log(f"[{name}] 기본 브랜치에 합치는 중…")
+                    self.say(rid, mid, label, self.merge()[0], msgs)
                 elif act == "run":
                     if not job:
                         return self.say(rid, mid, label, "실행할 계획이 없습니다. 먼저 무엇을 만들지 말해 주세요.", msgs)
                     self.log(f"[{name}] 계획대로 파일을 고치는 중…")
-                    out = self.cli.run(CODE_SYSTEM, (
+                    out, steps = self.cli.run_code(CODE_SYSTEM, (
                         f"[요청]\n{job['request']}\n\n[승인된 계획]\n{job['plan']}\n\n"
                         "위 계획대로 이 폴더에서 작업하세요. " + (
                             "필요한 명령은 직접 실행해도 됩니다. 단, 이 폴더 밖을 건드리거나 되돌릴 수 없는 명령"
                             "(파일 대량 삭제, 강제 푸시, 시스템 설정 변경, 프로그램 설치 등)은 실행하지 말고 대신 설명하세요. "
                             if self.shell else "명령 실행은 할 수 없으니, 필요한 명령이 있으면 사용자가 실행하도록 알려 주세요. ") +
-                        "끝나면 무엇을 어떻게 했는지 짧게 요약하세요."), tick, mode="shell" if self.shell else "run", cwd=folder)
+                        "끝나면 무엇을 어떻게 했는지 짧게 요약하세요."), tick, "shell" if self.shell else "run", folder, doing)
                     self.jobs.pop(rid, None)
-                    summary, pushable = self.changes(job["request"])
-                    self.say(rid, mid, label, out + "\n\n" + summary, msgs, "push" if pushable else None, "result")
+                    summary, pushable, stat = self.changes(job["request"])
+                    self.say(rid, mid, label, out + "\n\n" + summary, msgs, "push" if pushable else None, "result",
+                             steps, stat)
                 else:   # 새 요청이거나, 기다리는 계획에 대한 수정 의견
                     request = job["request"] if job else order["text"]
                     prompt = f"[요청]\n{request}\n\n"
                     if job:
                         prompt += f"[이전 계획]\n{job['plan']}\n\n[수정 의견]\n{order['text']}\n\n"
                     self.log(f"[{name}] 코드를 읽고 계획을 세우는 중…")
-                    out = self.cli.run(CODE_SYSTEM, prompt + (
+                    out, steps = self.cli.run_code(CODE_SYSTEM, prompt + (
                         "이 폴더의 코드를 읽고 위 요청을 어떻게 구현할지 계획을 세우세요. 지금은 계획 단계라 파일 수정이나 "
                         "명령 실행을 하지 않습니다. 사용자가 계획을 승인하면 그때 " +
                         ("파일 수정과 명령 실행을" if self.shell else "파일 수정을") + " 하게 됩니다.\n"
                         "계획에는 (1) 바꿀 파일과 바꿀 내용 (2) 작업 순서 (3) 주의할 점을 짧게 담으세요."),
-                        tick, mode="plan", cwd=folder)
+                        tick, "plan", folder, doing)
                     self.jobs[rid] = {"request": request, "plan": out}
-                    self.say(rid, mid, label, out, msgs, "plan", "plan")
+                    self.say(rid, mid, label, out, msgs, "plan", "plan", steps)
                 self.log(f"[{name}] {label}(나): 답을 올렸습니다.")
             except CliLoginError:
                 self.mark_read(rid, mid, raw, msgs)
