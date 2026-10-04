@@ -94,6 +94,9 @@ PRESETS = {
             "plan": ["-p", "--tools", "Read,Glob,Grep", "--strict-mcp-config", "--no-session-persistence"],
             "run": ["-p", "--tools", "Read,Edit,Write,Glob,Grep", "--permission-mode", "acceptEdits",
                     "--strict-mcp-config", "--no-session-persistence"],
+            # --shell 로 켰을 때만: 명령 실행(Bash·PowerShell)까지 허용
+            "shell": ["-p", "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell", "--allowedTools", "Bash,PowerShell",
+                      "--permission-mode", "acceptEdits", "--strict-mcp-config", "--no-session-persistence"],
             "system_flag": "--append-system-prompt",
         },
         "login_check": ["auth", "status"],   # 사용량을 쓰지 않고 로그인 상태만 확인하는 명령
@@ -135,6 +138,8 @@ PRESETS = {
                      "--deny-tool", "shell", "--deny-tool", "write"],
             "run": ["-s", "--no-color", "--no-ask-user", "--disable-builtin-mcps",
                     "--allow-tool", "write", "--deny-tool", "shell"],
+            "shell": ["-s", "--no-color", "--no-ask-user", "--disable-builtin-mcps",
+                      "--allow-tool", "write", "--allow-tool", "shell"],
             "system_flag": None,
         },
         "login_hint": "새 창에서 copilot 을 실행하고 /login 으로 로그인한 뒤 /exit 로 나오세요.",
@@ -366,7 +371,7 @@ class Cli:
 
     def command(self, system, prompt, mode="chat"):
         """실행할 명령과, 표준입력으로 보낼 글(없으면 None)을 만든다.
-        mode: chat(대화) / plan(코딩방: 읽고 계획만) / run(코딩방: 파일 수정)"""
+        mode: chat(대화) / plan(코딩방: 읽고 계획만) / run(코딩방: 파일 수정) / shell(파일 수정 + 명령 실행)"""
         args, system_flag, limit = self.args, self.system_flag, self.timeout
         if mode != "chat":
             args, system_flag, limit = self.code[mode], self.code["system_flag"], CODE_TIMEOUT
@@ -597,12 +602,13 @@ def clean_reply(raw, label):
 # ─────────────────────────────────────────────────────────────── 대화 루프
 
 class Agent:
-    def __init__(self, fb, cli, name, history, persona, tag="", work=None, key=""):
+    def __init__(self, fb, cli, name, history, persona, tag="", work=None, key="", shell=False):
         self.fb, self.cli, self.name = fb, cli, name
         self.history, self.persona = history, persona
         self.tag = tag   # AI를 여러 개 돌릴 때 기록 앞에 붙이는 계정 이름
         # 코딩방: 연결된 프로젝트, 지시를 확인하는 작업 키, 이미 받은 지시들, 방마다 승인을 기다리는 계획
         self.work, self.key = work, key
+        self.shell = shell   # 코딩방 실행 단계에서 명령 실행까지 허용할지
         self.nonces, self.jobs = set(), {}
 
     def log(self, message):
@@ -716,7 +722,7 @@ class Agent:
                 self.log(f"[{name}] {m['name']}: {preview(m['text'])}")
             try:
                 out = self.cli.run(build_system(raw, mid, self.persona), build_prompt(label, msgs, read),
-                                   tick=lambda: fb.db("PATCH", typing_path, {"at": SV}))
+                                   tick=lambda: fb.db("PATCH", typing_path, {"label": label, "kind": "ai", "at": SV}))
             except CliLoginError:
                 # 로그인이 풀린 채로 계속 부르면 메시지마다 로그인 창이 뜨므로 여기서 멈춘다
                 self.mark_read(rid, mid, raw, msgs)
@@ -833,7 +839,7 @@ class Agent:
         if not self.take_floor(rid, mid, label):
             return
         typing_path = f"rooms/{rid}/typing/{mid}"
-        tick = lambda: fb.db("PATCH", typing_path, {"at": SV})   # noqa: E731
+        tick = lambda: fb.db("PATCH", typing_path, {"label": label, "kind": "ai", "at": SV})   # noqa: E731
         try:
             for m in orders:
                 self.nonces.add(m["nonce"])
@@ -853,8 +859,11 @@ class Agent:
                     self.log(f"[{name}] 계획대로 파일을 고치는 중…")
                     out = self.cli.run(CODE_SYSTEM, (
                         f"[요청]\n{job['request']}\n\n[승인된 계획]\n{job['plan']}\n\n"
-                        "위 계획대로 이 폴더의 파일을 수정하세요. 명령 실행은 할 수 없습니다. "
-                        "끝나면 무엇을 어떻게 바꿨는지 짧게 요약하세요."), tick, mode="run", cwd=folder)
+                        "위 계획대로 이 폴더에서 작업하세요. " + (
+                            "필요한 명령은 직접 실행해도 됩니다. 단, 이 폴더 밖을 건드리거나 되돌릴 수 없는 명령"
+                            "(파일 대량 삭제, 강제 푸시, 시스템 설정 변경, 프로그램 설치 등)은 실행하지 말고 대신 설명하세요. "
+                            if self.shell else "명령 실행은 할 수 없으니, 필요한 명령이 있으면 사용자가 실행하도록 알려 주세요. ") +
+                        "끝나면 무엇을 어떻게 했는지 짧게 요약하세요."), tick, mode="shell" if self.shell else "run", cwd=folder)
                     self.jobs.pop(rid, None)
                     summary, pushable = self.changes(job["request"])
                     self.say(rid, mid, label, out + "\n\n" + summary, msgs, "push" if pushable else None, "result")
@@ -865,7 +874,9 @@ class Agent:
                         prompt += f"[이전 계획]\n{job['plan']}\n\n[수정 의견]\n{order['text']}\n\n"
                     self.log(f"[{name}] 코드를 읽고 계획을 세우는 중…")
                     out = self.cli.run(CODE_SYSTEM, prompt + (
-                        "이 폴더의 코드를 읽고 위 요청을 어떻게 구현할지 계획을 세우세요. 지금은 파일을 수정하지 마세요.\n"
+                        "이 폴더의 코드를 읽고 위 요청을 어떻게 구현할지 계획을 세우세요. 지금은 계획 단계라 파일 수정이나 "
+                        "명령 실행을 하지 않습니다. 사용자가 계획을 승인하면 그때 " +
+                        ("파일 수정과 명령 실행을" if self.shell else "파일 수정을") + " 하게 됩니다.\n"
                         "계획에는 (1) 바꿀 파일과 바꿀 내용 (2) 작업 순서 (3) 주의할 점을 짧게 담으세요."),
                         tick, mode="plan", cwd=folder)
                     self.jobs[rid] = {"request": request, "plan": out}
@@ -1140,6 +1151,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=180, help="CLI 응답 제한 시간(초) (기본 180)")
     ap.add_argument("--project", help="코딩방에서 AI가 고칠 내 컴퓨터의 폴더")
     ap.add_argument("--github", help="코딩방에서 AI가 고칠 GitHub 저장소 주소 (받아 와서 따로 만든 브랜치에서 작업)")
+    ap.add_argument("--shell", action="store_true",
+                    help="코딩방에서 계획을 승인하면 AI가 명령(git, python 등)도 실행할 수 있게 함. 위험할 수 있음")
     ap.add_argument("--key", default="", help="코딩방 작업 키. 화면이 만들어 주는 명령에 들어 있으며, 이 키로 보낸 지시만 따른다")
     ap.add_argument("--site", help="배포된 AI Talk 주소 (예: https://ai-talk.이름.workers.dev). "
                                    "firebase-config.json 없이 그 주소에서 Firebase 설정을 받아 온다")
@@ -1223,6 +1236,8 @@ def main():
             die(f"{cli.title} 은(는) 코딩방을 지원하지 않습니다. claude, agy, copilot 중에서 골라 주세요.")
         if len(args.key) < 16:
             die("코딩방에는 작업 키(--key)가 필요합니다. 대화방 정보의 'AI 초대하기' 명령을 그대로 복사해 주세요.")
+        if args.shell and "shell" not in cli.code:
+            die(f"{cli.title} 은(는) 명령 실행 허용(--shell)을 지원하지 않습니다. claude 나 copilot 을 써 주세요.")
         work = setup_work(args.project, args.github, args.data)
         print()
         print("=" * 60)
@@ -1231,7 +1246,11 @@ def main():
         if count > 1:
             print(f"  - AI {count}개가 같은 폴더를 맡습니다. 각자 계획을 내고, 승인한 AI만 파일을 고칩니다.")
         print("  - 작업 키로 보낸 지시만 따르고, 계획을 승인해야 파일을 고칩니다.")
-        print("  - 명령 실행은 하지 않고, 이 폴더 밖의 파일은 건드리지 않습니다.")
+        if args.shell:
+            print("  - 위험: 명령 실행을 허용했습니다. 계획을 승인하면 AI가 이 컴퓨터에서 명령을 실행합니다.")
+            print("    명령은 이 폴더 밖에도 영향을 줄 수 있으니, 계획을 꼭 읽고 승인하세요.")
+        else:
+            print("  - 명령 실행은 하지 않고, 이 폴더 밖의 파일은 건드리지 않습니다.")
         print("=" * 60)
         print()
     runners = []   # (agent, 시작할 때 이미 들어가 있던 방들)
@@ -1243,7 +1262,7 @@ def main():
             fb.sync_clock()
             log(f"로그인: {username} (AI 이름: {profile['name']}) · {cli.title}")
             agent = Agent(fb, cli, profile["name"], args.history, args.persona,
-                          tag=f"<{username}> " if count > 1 else "", work=work, key=args.key)
+                          tag=f"<{username}> " if count > 1 else "", work=work, key=args.key, shell=args.shell)
             existing = set(fb.get(f"userRooms/{fb.uid}") or {})
             for code in args.code:
                 rid, raw, mid = agent.join(code, " ".join(args.alias.split())[:20])

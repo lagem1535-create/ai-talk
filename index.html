@@ -958,7 +958,7 @@ function viewRoom(id) {
     unread: Math.max(0, (last ? Number(last.n) || 0 : 0) - (Number(mine.read_n) || 0)),
     me: { mid, label: String(mine.label || '?'), read: mine.read || '' },
     members,
-    typing: Object.entries(raw.typing || {}).filter(([k, v]) => k !== mid && v && t - (v.at || 0) < TYPING_MS).map(([, v]) => String(v.label)),
+    typing: Object.entries(raw.typing || {}).filter(([k, v]) => k !== mid && v && v.label && t - (v.at || 0) < TYPING_MS).map(([, v]) => String(v.label)),
   };
 }
 let refreshQueued = false;
@@ -1505,6 +1505,16 @@ function renderInfo(room, force) {
     if (room.coding && project) {
       cmd += (github ? ` --github ${project.replace(/\/$/, '')}` : ` --project "${project}"`) + ` --key ${ensureCodeKey(room.id)}`;
     }
+    // 명령 실행 허용 (위험해서 켤 때 한 번 확인받는다). Antigravity 는 지원하지 않는다
+    const shellOk = S.cli !== 'agy';
+    const shell = room.coding && shellOk && store.get('shell.' + room.id) === '1';
+    if (room.coding && project && shell) cmd += ' --shell';
+    const shellSwitch = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(shell), 'aria-label': '명령 실행 허용',
+      onclick: async () => {
+        if (!shell && !(await trustShell())) return;
+        store.set('shell.' + room.id, shell ? '0' : '1');
+        renderInfo(current(), true);
+      } });
     const ready = !room.coding || !!project;
 
     parts.push(h('section', { class: 'sec' },
@@ -1517,6 +1527,9 @@ function renderInfo(room, force) {
         h('div', { class: 'seg' }, CLIS.map(([id, title]) =>
           h('button', { type: 'button', class: id === S.cli ? 'on' : '', onclick: () => { S.cli = id; renderInfo(current(), true); } }, title))),
         room.coding ? h('div', { class: 'project-row' }, h('span', null, 'AI가 고칠 프로젝트'), picker) : null,
+        room.coding && shellOk ? h('div', { class: 'row' }, h('div', null, h('strong', null, '명령 실행 허용'),
+          h('small', null, '켜면 계획을 승인했을 때 AI가 git·python 같은 명령도 실행합니다.')), shellSwitch) : null,
+        room.coding && !shellOk ? h('p', { class: 'hint' }, 'Antigravity 는 명령 실행 허용을 지원하지 않아요. Claude 나 Copilot 을 고르세요.') : null,
         room.kind === 'private' ? null : h('label', { class: 'count-row' },
           h('span', null, `${cliTitle} 몇 개를 넣을까요? (1~${MAX_COUNT})`), countInput),
         ready ? h('div', { class: 'term' },
@@ -1532,6 +1545,7 @@ function renderInfo(room, force) {
           h('p', { class: 'hint' }, github
             ? 'GitHub 저장소는 AI의 컴퓨터로 받아 와서 ai-talk-work 브랜치에서만 고칩니다. main 은 건드리지 않고, 「GitHub에 올리기」를 눌러야 올라갑니다.'
             : '내 폴더는 AI가 그 자리에서 바로 고칩니다. 중요한 폴더라면 먼저 복사해 두거나 git 으로 관리하세요.'),
+          shell ? h('p', { class: 'hint' }, '명령 실행을 켠 뒤에는 AI를 이 명령으로 다시 불러야 적용됩니다. (이미 켜 둔 AI는 창을 닫고 다시 실행)') : null,
           h('p', { class: 'hint' }, '명령에 들어 있는 --key 는 이 방의 작업 키입니다. 이 브라우저에서 보낸 지시만 AI가 따르니, 명령을 남에게 보여 주지 마세요.'),
         ] : null,
         room.name_mode === 'alias' ? h('p', { class: 'hint' }, '가명을 직접 정하려면 명령 뒤에 --alias 이름 을 붙이세요. 없으면 자동으로 지어 줍니다.') : null,
@@ -1853,6 +1867,23 @@ function confirmBox(title, text, okLabel, danger) {
     modalDone = resolve;
   });
 }
+// 코딩방에서 명령 실행을 허용하기 전에 한 번 확인받는다
+function trustShell() {
+  return new Promise((resolve) => {
+    const yes = h('button', { type: 'button', class: 'btn primary danger', onclick: () => { modalDone = null; closeModal(); resolve(true); } }, '위험을 알고 켜기');
+    openModal('AI가 명령을 실행하게 할까요?', h('div', { class: 'trust' },
+      h('p', { class: 'trust-warn' }, '위험: AI가 내 컴퓨터에서 명령을 직접 실행합니다.'),
+      h('ul', null,
+        h('li', null, '계획을 승인하면 AI가 git, python, npm 같은 명령을 스스로 실행합니다. 파일 수정과 달리 명령은 프로젝트 폴더 밖에도 영향을 줄 수 있습니다.'),
+        h('li', null, '파일 삭제, 프로그램 설치, 인터넷으로 내보내기 같은 일도 명령으로는 가능합니다. AI에게 하지 말라고 일러두지만 완전히 막지는 못합니다.'),
+        h('li', null, 'GitHub 에서 받아 온 남의 코드에는 AI를 속이는 글이 숨어 있을 수 있습니다. 믿을 수 있는 프로젝트에서만 켜세요.'),
+        h('li', null, '계획을 꼭 읽어 보고, 어떤 명령을 실행하려는지 확인한 뒤 승인하세요.')),
+      h('p', null, '켠 뒤에는 새로 나오는 명령으로 AI를 다시 불러야 적용됩니다. 끄고 싶으면 스위치를 끄고 AI를 다시 부르세요.'),
+      h('div', { class: 'form-actions' },
+        h('button', { type: 'button', class: 'btn', onclick: closeModal }, '켜지 않기'), yes)), yes);
+    modalDone = resolve;
+  });
+}
 // 같은 AI를 여러 개 넣기 전에 한 번 확인받는다 (VS Code 의 '이 폴더를 신뢰합니까?' 와 같은 확인)
 function trustMulti(n, cliTitle) {
   return new Promise((resolve) => {
@@ -1989,7 +2020,7 @@ function manual() {
       ]],
       ['safe', '안전하게 쓰기', [
         ['명령에 들어 있는 ', code('--key'), ' 는 이 방의 작업 키입니다. 이 브라우저에서 보낸 지시만 AI가 따르니, 명령을 남에게 보여 주지 마세요.'],
-        'AI는 파일을 읽고 고치기만 합니다. 프로그램 실행·설치는 하지 않고, 연결한 폴더 밖은 건드리지 못합니다.',
+        '기본으로는 AI가 파일을 읽고 고치기만 하고, 연결한 폴더 밖은 건드리지 못합니다. 「명령 실행 허용」을 켜면 git·python 같은 명령도 실행하는데, 위험할 수 있어 켤 때 경고가 나옵니다.',
         '내 폴더를 맡길 때는 복사본을 두거나 git 으로 관리하세요. 되돌리기 기능은 따로 없습니다.',
         '코딩방 위쪽의 물음표(?) 버튼으로 이 설명서를 다시 볼 수 있습니다.',
       ]],
