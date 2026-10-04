@@ -98,7 +98,7 @@ PRESETS = {
             "shell": ["-p", "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell", "--allowedTools", "Bash,PowerShell",
                       "--permission-mode", "acceptEdits", "--strict-mcp-config", "--no-session-persistence"],
             "system_flag": "--append-system-prompt",
-            "stream": True,   # 진행 과정(읽은 파일, 고친 파일, 실행한 명령)을 줄 단위로 알려 준다
+            "stream": "claude",   # 진행 과정(읽은 파일, 고친 파일, 실행한 명령)을 줄 단위로 알려 준다
         },
         "login_check": ["auth", "status"],   # 사용량을 쓰지 않고 로그인 상태만 확인하는 명령
         "login_hint": "새 창에서 claude 를 실행하고 /login 으로 로그인한 뒤 /exit 로 나오세요.",
@@ -142,6 +142,7 @@ PRESETS = {
             "shell": ["-s", "--no-color", "--no-ask-user", "--disable-builtin-mcps",
                       "--allow-tool", "write", "--allow-tool", "shell"],
             "system_flag": None,
+            "stream": "copilot",
         },
         "login_hint": "새 창에서 copilot 을 실행하고 /login 으로 로그인한 뒤 /exit 로 나오세요.",
     },
@@ -364,6 +365,73 @@ def code_step(block, cwd):
     return {"k": "note", "t": str(name)[:60]}
 
 
+def git_intent(text):
+    """짧은 말로 합치기·올리기를 부탁했는지 본다. 반환: 'merge', 'push' 또는 None.
+    긴 글은 코딩 요청일 수 있으므로(예: '병합 기능을 만들어 줘') 짧은 말만 받아들인다."""
+    text = " ".join(text.split()).lower()
+    if len(text) > 30:
+        return None
+    if re.search(r"병합|합쳐|합치|머지|merge", text):
+        return "merge"
+    if re.search(r"올려|푸시|push", text):
+        return "push"
+    return None
+
+
+def claude_events(ev, cwd):
+    """Claude Code 의 진행 내용 한 줄 → (한 일들, 마지막 답 또는 None)"""
+    final = ev["result"] if isinstance(ev.get("result"), str) else None
+    steps = []
+    if ev.get("type") == "assistant":
+        steps = [s for s in (code_step(b, cwd) for b in (ev.get("message") or {}).get("content") or []) if s]
+    return steps, final
+
+
+def copilot_events(ev, cwd):
+    """GitHub Copilot CLI 의 진행 내용 한 줄 → (한 일들, 마지막 답 또는 None)"""
+    kind, data = ev.get("type"), ev.get("data") or {}
+
+    def rel(path):
+        try:
+            return os.path.relpath(str(path), cwd).replace("\\", "/")[:200]
+        except ValueError:
+            return str(path)[:200]
+
+    if kind == "tool.execution_start":
+        name, arg = str(data.get("toolName") or ""), data.get("arguments")
+        if name == "apply_patch":   # 파일 만들기·고치기·지우기는 패치 한 덩어리로 온다
+            found = re.findall(r"^\*\*\* (Add|Update|Delete) File: (.+)$", str(arg), re.M)
+            return [{"k": "write" if verb == "Add" else "edit",
+                     "t": ("삭제: " if verb == "Delete" else "") + rel(path.strip())} for verb, path in found], None
+        arg = arg if isinstance(arg, dict) else {}
+        if name in ("powershell", "bash", "shell"):
+            return [{"k": "cmd", "t": " ".join(str(arg.get("command", "")).split())[:240]}], None
+        target = arg.get("path") or arg.get("file_path") or arg.get("pattern") or arg.get("query") or ""
+        if name in ("view", "read", "read_file"):
+            return [{"k": "read", "t": rel(target)}], None
+        if name in ("create", "write", "create_file"):
+            return [{"k": "write", "t": rel(target)}], None
+        if name in ("edit", "str_replace", "str_replace_editor"):
+            return [{"k": "edit", "t": rel(target)}], None
+        if name in ("grep", "glob", "search", "rg"):
+            return [{"k": "search", "t": str(target)[:200]}], None
+        return [{"k": "note", "t": name[:60]}], None
+    if kind in ("assistant.message", "assistant.reasoning"):
+        text = data.get("content")
+        text = " ".join(text.split()) if isinstance(text, str) else ""
+        if not text:
+            return [], None
+        if kind == "assistant.message" and not data.get("toolRequests"):
+            return [{"k": "note", "t": text[:300]}], data.get("content")   # 도구를 더 부르지 않는 메시지가 마지막 답
+        return [{"k": "note", "t": text[:300]}], None
+    return [], None
+
+
+STREAMS = {   # 진행 과정을 알려 주는 CLI: (추가할 옵션, 한 줄을 읽는 함수)
+    "claude": (["--output-format", "stream-json", "--verbose"], claude_events),
+    "copilot": (["--output-format", "json"], copilot_events),
+}
+
 STEP_TEXT = {"write": "파일 만드는 중", "edit": "파일 고치는 중", "read": "파일 읽는 중", "search": "코드 찾는 중",
              "cmd": "명령 실행 중", "note": "생각하는 중"}
 
@@ -467,11 +535,12 @@ class Cli:
 
     def run_code(self, system, prompt, tick, mode, cwd, on_step=None):
         """코딩방 작업을 실행한다. 반환: (마지막 답, 한 일 목록).
-        한 일 목록은 진행 과정을 알려 주는 CLI(Claude Code)에서만 채워진다."""
-        if not self.code.get("stream"):
+        한 일 목록은 진행 과정을 알려 주는 CLI(Claude Code, GitHub Copilot)에서만 채워진다."""
+        if self.code.get("stream") not in STREAMS:
             return self.run(system, prompt, tick, mode=mode, cwd=cwd), []
+        flags, parse = STREAMS[self.code["stream"]]
         argv, text = self.command(system, prompt, mode)
-        argv += ["--output-format", "stream-json", "--verbose"]
+        argv += flags
         extra = {} if IS_WINDOWS else {"start_new_session": True}
         try:
             proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -494,19 +563,18 @@ class Cli:
                     ev = json.loads(raw.decode("utf-8", errors="replace"))
                 except ValueError:
                     continue
-                if isinstance(ev.get("result"), str):
-                    final[0] = ev["result"]
-                if ev.get("type") != "assistant":
+                if not isinstance(ev, dict):
                     continue
-                for block in (ev.get("message") or {}).get("content") or []:
-                    step = code_step(block, cwd)
-                    if step:
-                        steps.append(step)
-                        if on_step:
-                            try:
-                                on_step(step)
-                            except Exception:
-                                pass
+                found, answer = parse(ev, cwd)
+                if answer is not None:
+                    final[0] = answer
+                for step in found:
+                    steps.append(step)
+                    if on_step:
+                        try:
+                            on_step(step)
+                        except Exception:
+                            pass
 
         try:
             proc.stdin.write(text.encode("utf-8"))
@@ -1021,6 +1089,13 @@ class Agent:
                     summary, pushable, stat = self.changes(job["request"])
                     self.say(rid, mid, label, out + "\n\n" + summary, msgs, "push" if pushable else None, "result",
                              steps, stat)
+                elif not job and self.work["source"] == "github" and git_intent(order["text"]):
+                    intent = git_intent(order["text"])
+                    self.say(rid, mid, label,
+                             "기본 브랜치(main)에 합칠 준비가 됐습니다. 아래 버튼을 누르면 합치고 GitHub 에 올립니다."
+                             if intent == "merge" else
+                             f"아래 버튼을 누르면 `{WORK_BRANCH}` 브랜치를 GitHub 에 올립니다. 바로 기본 브랜치에 합칠 수도 있습니다.",
+                             msgs, intent)
                 else:   # 새 요청이거나, 기다리는 계획에 대한 수정 의견
                     request = job["request"] if job else order["text"]
                     prompt = f"[요청]\n{request}\n\n"
