@@ -9,6 +9,7 @@ __pycache__
 data
 local-server-version
 server.py
+install_uv.py
 *.bat
 *.md
 worker.js
