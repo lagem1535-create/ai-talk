@@ -256,6 +256,12 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .help code { padding: 1px 5px; border-radius: 5px; background: var(--chip); font: .9em var(--mono); }
 .help a { color: var(--accent); }
 .me { flex: 1; }
+.choices.three { grid-template-columns: repeat(3, 1fr); }
+.choices.three .choice { flex-direction: column; gap: 4px; }
+.chip.code { background: var(--term); color: var(--term-green); }
+.acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.project-row { display: grid; gap: 6px; margin-bottom: 8px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.project-row input[type=text] { padding: 7px 10px; font: 13px var(--mono); }
 .bubble pre {
   margin: 0; padding: 10px 12px; border-radius: 10px; overflow-x: auto; white-space: pre;
   background: var(--term); color: var(--term-ink); font: 12.5px/1.55 var(--mono);
@@ -622,6 +628,7 @@ const ICONS = {
   refresh: '<path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
   userplus: '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/>',
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  code: '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
 };
 function icon(name) {
@@ -905,6 +912,8 @@ function viewRoom(id) {
     .map(([k, m]) => ({
       mid: k, uid: m.uid, label: String(m.label || '?'), kind: m.kind === 'ai' ? 'ai' : 'human',
       online: k === mid || t - (m.seen || 0) < ONLINE_MS, owner: m.uid === meta.owner, me: k === mid,
+      work: m.work && m.work.name ? String(m.work.name) : '',                 // 코딩방에서 맡은 프로젝트
+      pending: m.pending && m.pending.key ? { key: String(m.pending.key), type: String(m.pending.type) } : null,   // 승인을 기다리는 메시지
     }));
   const others = Object.entries(raw.members).filter(([k, m]) => k !== mid && m).map(([, m]) => m);
   const other = others.find((m) => !m.left) || others[0];
@@ -914,6 +923,7 @@ function viewRoom(id) {
     name: meta.name ? String(meta.name) : (other ? String(other.label) : '1:1 대화'),   // 1:1 대화는 상대 이름이 방 이름
     kind: meta.kind === 'private' ? 'private' : 'open',
     is_dm: !!meta.dm,
+    coding: !!meta.coding,   // 코딩방: AI가 연결된 프로젝트의 파일을 고친다
     name_mode: MODES[meta.name_mode] ? meta.name_mode : 'realname',
     code: meta.code ? fmtCode(String(meta.code)) : null,
     is_owner: meta.owner === S.uid,
@@ -984,13 +994,18 @@ const lastN = (raw) => Number(raw && raw.last && raw.last.n) || 0;
 async function createRoom(name, kind, mode, alias) {
   name = cleanName(name, 40);
   if (!name) throw userError('방 이름을 입력하세요.');
+  const coding = kind === 'coding';
+  if (coding) { kind = 'open'; mode = 'realname'; }
   const id = randomId(12);
   const mid = randomId(8);
   let code;
   do { code = randomId(8, CODE_ALPHABET); } while ((await get(R('codes', code))).exists());
   const meta = { name, kind, name_mode: mode, code, owner: S.uid, ai_paused: false, ai_chain_limit: 6, created: SV };
+  if (coding) meta.coding = true;
   const { label } = makeLabel({ meta, members: {} }, 'human', S.me.name, cleanName(alias, 20));
-  const sys = systemChange(id, '대화방이 만들어졌습니다. 초대코드를 AI에게 전해 주세요.', 0);
+  const sys = systemChange(id, coding
+    ? '코딩방이 만들어졌습니다. 대화방 정보에서 프로젝트를 정하고 AI를 불러 주세요.'
+    : '대화방이 만들어졌습니다. 초대코드를 AI에게 전해 주세요.', 0);
   await update(R(), {
     [`rooms/${id}`]: {
       meta, streak: 0, last: sys.changes[`rooms/${id}/last`],
@@ -1165,12 +1180,31 @@ async function renameMember(room, member, next) {
     [`rooms/${room.id}/members/${member.mid}/label`]: next,
   });
 }
-async function sendText(room, text) {
+// 코딩방 작업 키: AI를 부르는 명령에 넣어 주는 비밀 값. 이 브라우저에만 저장하고 데이터베이스에는 올리지 않는다.
+// AI는 이 키로 서명한 지시만 따르므로, 다른 사람이 대화방 데이터를 고쳐도 내 컴퓨터의 파일을 건드릴 수 없다.
+const codeKey = (roomId) => store.get('codekey.' + roomId) || '';
+function ensureCodeKey(roomId) {
+  if (!codeKey(roomId)) store.set('codekey.' + roomId, randomId(32));
+  return codeKey(roomId);
+}
+async function signOrder(secret, roomId, act, nonce, t, text) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${roomId}\n${act}\n${nonce}\n${t}\n${text}`));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+async function sendText(room, text, act = '') {
   const n = lastN(S.raw.get(room.id)) + 1;
   const key = push(R('messages', room.id)).key;
   const mid = room.me.mid;
+  const order = {};
+  if (room.coding && codeKey(room.id)) {   // 코딩방에서는 내 지시임을 증명하는 서명을 붙인다
+    const nonce = randomId(16);
+    const t = Math.round(now());
+    Object.assign(order, { act, nonce, t, sig: await signOrder(codeKey(room.id), room.id, act, nonce, t, text) });
+  }
   await update(R(), {
-    [`messages/${room.id}/${key}`]: { m: mid, name: room.me.label, kind: 'human', text, ts: SV },
+    [`messages/${room.id}/${key}`]: { m: mid, name: room.me.label, kind: 'human', text, ts: SV, ...order },
     [`rooms/${room.id}/last`]: { key, name: room.me.label, kind: 'human', text: text.slice(0, 120), ts: SV, n },
     [`rooms/${room.id}/streak`]: 0,   // 사람이 말하면 AI 연속 대화 수를 다시 센다
     [`rooms/${room.id}/members/${mid}/read`]: key,
@@ -1267,8 +1301,11 @@ function renderChrome(room) {
   $('#member-count').textContent = String(room.members.length);
   $('#room-chips').replaceChildren(
     h('span', { class: 'chip mode m-' + room.name_mode }, icon(mode.icon), mode.title),
-    h('span', { class: 'chip' }, room.kind === 'private' ? [icon('lock'), '1:1 개인대화'] : '오픈채팅'),
+    room.coding ? h('span', { class: 'chip code' }, icon('code'), '코딩방')
+      : h('span', { class: 'chip' }, room.kind === 'private' ? [icon('lock'), '1:1 개인대화'] : '오픈채팅'),
     h('span', { class: 'chip' }, `AI ${ais.length} · 사람 ${room.members.length - ais.length}`));
+  $('#input').placeholder = room.coding ? '만들거나 고칠 것을 적어 주세요 (AI가 먼저 계획을 보여 줍니다)' : '메시지 보내기 (Enter 전송 · Shift+Enter 줄바꿈)';
+  renderActs(room);
 
   const banner = $('#banner');
   banner.hidden = !room.ai_paused;
@@ -1282,6 +1319,7 @@ function renderChrome(room) {
   let line = '';
   if (room.typing.length) line = 'T' + room.typing.join(', ');
   else if (room.ai_paused) line = '';
+  else if (room.coding && ais.length && !codeKey(room.id)) line = 'H이 브라우저에는 이 방의 작업 키가 없어서 코딩을 시킬 수 없어요. 대화방 정보의 명령으로 AI를 다시 불러 주세요.';
   else if (!ais.length) line = room.code ? 'H아직 AI가 없어요. 대화방 정보에서 초대코드를 복사해 AI에게 전해 주세요.' : '';
   else if (!ais.some((m) => m.online)) line = 'HAI가 접속해 있지 않아요. 터미널에서 ai_agent.py 가 켜져 있는지 확인해 주세요.';
   else if (ais.length > 1 && room.ai_chain_limit > 0 && room.ai_streak >= room.ai_chain_limit) line = 'HAI끼리의 연속 대화 한도에 닿았어요. 메시지를 보내면 다시 이어집니다.';
@@ -1307,20 +1345,26 @@ function renderInfo(room, force) {
 
   const mode = MODES[room.name_mode];
   const parts = [h('section', { class: 'sec' },
-    h('div', { class: 'mode-card m-' + room.name_mode },
-      h('span', { class: 'cicon' }, icon(mode.icon)),
-      h('div', null,
-        h('strong', null, `${mode.title} · ${room.kind === 'private' ? '1:1 개인대화' : '오픈채팅'}`),
-        h('small', null, mode.desc))))];
+    room.coding
+      ? h('div', { class: 'mode-card m-realname' },
+        h('span', { class: 'cicon' }, icon('code')),
+        h('div', null,
+          h('strong', null, '코딩방'),
+          h('small', null, '할 일을 적으면 AI가 코드를 읽고 계획을 보여 줍니다. 「계획대로 실행」을 눌러야 파일을 고칩니다. 계획이 마음에 안 들면 의견을 적어 다시 받으세요.')))
+      : h('div', { class: 'mode-card m-' + room.name_mode },
+        h('span', { class: 'cicon' }, icon(mode.icon)),
+        h('div', null,
+          h('strong', null, `${mode.title} · ${room.kind === 'private' ? '1:1 개인대화' : '오픈채팅'}`),
+          h('small', null, mode.desc))))];
 
   if (room.code) {
     const full = room.kind === 'private' && room.members.length >= 2;
     // 폴더 경로까지 넣어서, CMD 어디에서 붙여 넣어도 실행되게 한다
     const script = APP_DIR.startsWith('__') ? 'ai_agent.py' : `"${APP_DIR}\\ai_agent.py"`;
-    const count = room.kind === 'private' ? 1 : S.count;   // 개인대화방에는 AI가 하나만 들어온다
+    const count = room.kind === 'private' || room.coding ? 1 : S.count;   // 개인대화방·코딩방에는 AI가 하나만
     // 배포된 주소로 들어왔으면, AI 프로그램도 이 주소에서 Firebase 설정을 받아 가게 한다
     const site = APP_DIR.startsWith('__') ? ` --site ${location.origin}` : '';
-    const cmd = `python ${script}${site} --cli ${S.cli} --code ${room.code}` + (count > 1 ? ` --count ${count} --yes` : '');
+    let cmd = `python ${script}${site} --cli ${S.cli} --code ${room.code}` + (count > 1 ? ` --count ${count} --yes` : '');
     const [, cliTitle, exe] = CLIS.find(([id]) => id === S.cli) || CLIS[0];
     const countInput = h('input', { type: 'number', min: 1, max: MAX_COUNT, value: count, 'aria-label': '넣을 AI 개수' });
     countInput.addEventListener('change', async () => {
@@ -1330,24 +1374,46 @@ function renderInfo(room, force) {
       S.count = n;
       renderInfo(current(), true);
     });
+
+    // 코딩방: 어떤 프로젝트를 고칠지 정해야 명령이 완성된다
+    const project = (store.get('project.' + room.id) || '').trim();
+    const github = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(project);
+    const projectInput = h('input', { type: 'text', value: project, maxlength: 300, spellcheck: 'false', placeholder: 'C:\\내\\프로젝트\\폴더  또는  https://github.com/아이디/저장소' });
+    projectInput.addEventListener('change', () => {
+      store.set('project.' + room.id, projectInput.value.replace(/"/g, '').trim());
+      renderInfo(current(), true);
+    });
+    if (room.coding && project) {
+      cmd += (github ? ` --github ${project.replace(/\/$/, '')}` : ` --project "${project}"`) + ` --key ${ensureCodeKey(room.id)}`;
+    }
+    const ready = !room.coding || !!project;
+
     parts.push(h('section', { class: 'sec' },
       h('h4', null, '초대코드'),
       h('div', { class: 'code-row' },
         h('code', { class: 'code' }, room.code),
         h('button', { type: 'button', class: 'icon-btn', title: '초대코드 복사', 'aria-label': '초대코드 복사', onclick: () => copyText(room.code, '초대코드를 복사했어요') }, icon('copy'))),
       full ? h('p', { class: 'hint' }, '두 명이 모두 들어와 있어서 더 초대할 수 없어요.') : [
-        h('h4', null, 'AI 초대하기'),
+        h('h4', null, room.coding ? '코딩할 AI 부르기' : 'AI 초대하기'),
         h('div', { class: 'seg' }, CLIS.map(([id, title]) =>
           h('button', { type: 'button', class: id === S.cli ? 'on' : '', onclick: () => { S.cli = id; renderInfo(current(), true); } }, title))),
-        room.kind === 'private' ? null : h('label', { class: 'count-row' },
+        room.coding ? h('label', { class: 'project-row' }, h('span', null, 'AI가 고칠 프로젝트 (내 컴퓨터의 폴더 경로 또는 GitHub 주소)'), projectInput) : null,
+        room.kind === 'private' || room.coding ? null : h('label', { class: 'count-row' },
           h('span', null, `${cliTitle} 몇 개를 넣을까요? (1~${MAX_COUNT})`), countInput),
-        h('div', { class: 'term' },
+        ready ? h('div', { class: 'term' },
           h('div', { class: 'term-line' }, h('span', { class: 'prompt' }, '$'), cmd.split(' ').map((word) => h('span', null, word))),
-          h('button', { type: 'button', class: 'icon-btn', title: '명령 복사', 'aria-label': '명령 복사', onclick: () => copyText(cmd, '명령을 복사했어요') }, icon('copy'))),
-        h('p', { class: 'hint' }, `CMD 창에 이 한 줄만 붙여 넣고 Enter를 누르세요. ${exe} 는 이 명령이 알아서 켜고, AI에게 따로 말을 걸 필요는 없어요.`),
-        h('p', { class: 'hint' }, count > 1
+          h('button', { type: 'button', class: 'icon-btn', title: '명령 복사', 'aria-label': '명령 복사', onclick: () => copyText(cmd, '명령을 복사했어요') }, icon('copy')))
+          : h('p', { class: 'hint' }, '위 칸에 프로젝트 폴더 경로나 GitHub 저장소 주소를 넣고 Enter 를 누르면 명령이 나옵니다.'),
+        !ready ? null : h('p', { class: 'hint' }, `CMD 창에 이 한 줄만 붙여 넣고 Enter를 누르세요. ${exe} 는 이 명령이 알아서 켜고, AI에게 따로 말을 걸 필요는 없어요.`),
+        !ready ? null : h('p', { class: 'hint' }, count > 1
           ? `처음에는 비밀번호(6자 이상)를 한 번만 묻고, AI 계정 ${count}개(${S.cli}, ${S.cli}2 …)에 모두 같은 비밀번호를 씁니다. 창을 켜 두는 동안 AI들이 방에 있습니다.`
           : '처음에는 AI 계정의 비밀번호(6자 이상)를 정하라고 물어봅니다. 창을 켜 두는 동안 AI가 방에 있습니다.'),
+        room.coding ? [
+          h('p', { class: 'hint' }, github
+            ? 'GitHub 저장소는 AI의 컴퓨터로 받아 와서 ai-talk-work 브랜치에서만 고칩니다. main 은 건드리지 않고, 「GitHub에 올리기」를 눌러야 올라갑니다.'
+            : '내 폴더는 AI가 그 자리에서 바로 고칩니다. 중요한 폴더라면 먼저 복사해 두거나 git 으로 관리하세요.'),
+          h('p', { class: 'hint' }, '명령에 들어 있는 --key 는 이 방의 작업 키입니다. 이 브라우저에서 보낸 지시만 AI가 따르니, 명령을 남에게 보여 주지 마세요.'),
+        ] : null,
         room.name_mode === 'alias' ? h('p', { class: 'hint' }, '가명을 직접 정하려면 명령 뒤에 --alias 이름 을 붙이세요. 없으면 자동으로 지어 줍니다.') : null,
       ]));
   }
@@ -1359,7 +1425,7 @@ function renderInfo(room, force) {
       h('div', { class: 'mname' },
         h('span', { class: 'mlabel' }, m.label, m.me ? h('em', null, '나') : null),
         h('span', { class: 'msub' }, h('i', { class: 'dot' + (m.online ? ' on' : '') }),
-          (m.kind === 'ai' ? 'AI' : '사람') + (m.owner ? ' · 방장' : '') + (m.online ? '' : ' · 오프라인'))),
+          (m.kind === 'ai' ? 'AI' : '사람') + (m.owner ? ' · 방장' : '') + (m.online ? '' : ' · 오프라인') + (m.work ? ` · ${m.work}` : ''))),
       // 이름이 드러나는 경우에만 친구 추가를 보여 준다 (익명방의 AI, 가명방에서는 정체가 드러나므로 숨김)
       !m.me && m.uid && !S.friends[m.uid] && (room.name_mode === 'realname' || (room.name_mode === 'anonymous' && m.kind === 'human'))
         ? h('button', { type: 'button', class: 'icon-btn', title: '친구 추가', 'aria-label': `${m.label} 님 친구 추가`, onclick: () => addFriendUid(m.uid).catch(fail) }, icon('userplus')) : null,
@@ -1518,7 +1584,25 @@ function msgNode(m, prev, fresh) {
     cont ? h('span') : avatar(m.mid, m.name, m.kind),
     h('div', null,
       cont ? null : h('div', { class: 'meta' }, h('span', null, m.name), m.kind === 'ai' ? h('span', { class: 'tag' }, 'AI') : null),
-      row));
+      row,
+      m.kind === 'ai' ? h('div', { class: 'acts', 'data-key': m.id, 'data-mid': m.mid || '', hidden: true }) : null));
+}
+// 코딩방: AI가 승인을 기다리는 메시지 아래에만 버튼을 보여 준다 (계획 → 실행/취소, 작업 완료 → GitHub 에 올리기)
+function renderActs(room) {
+  for (const box of document.querySelectorAll('#msgs .acts')) {
+    const member = room.coding && codeKey(room.id) ? room.members.find((m) => m.mid === box.dataset.mid) : null;
+    const type = member && member.pending && member.pending.key === box.dataset.key ? member.pending.type : '';
+    if (box.dataset.type === type) continue;
+    box.dataset.type = type;
+    box.hidden = !type;
+    const act = (name, text, label, cls) => h('button', { type: 'button', class: 'btn small' + (cls ? ' ' + cls : ''), onclick: () => {
+      box.hidden = true;
+      sendText(room, text, name).catch(fail);
+    } }, label);
+    if (type === 'plan') box.replaceChildren(act('run', '계획대로 실행해 주세요.', '계획대로 실행', 'primary'), act('cancel', '이 계획은 취소할게요.', '취소'));
+    else if (type === 'push') box.replaceChildren(act('push', 'GitHub에 올려 주세요.', 'GitHub에 올리기', 'primary'));
+    else box.replaceChildren();
+  }
 }
 function drawAll(id) {
   const c = cacheOf(id);
@@ -1572,6 +1656,8 @@ function mergeMessages(id, data) {   // 서버에서 온 최근 메시지 묶음
     }
   }
   if (S.cur !== id) return;
+  const room = current();
+  if (room) renderActs(room);
   if (stick) scrollBottom(); else $('#jump').hidden = false;
 }
 async function loadOlder(id) {
@@ -1786,6 +1872,9 @@ function openCreate() {
   const alias = h('input', { type: 'text', maxlength: 20, placeholder: '비워 두면 자동으로 지어 줘요' });
   const aliasRow = h('label', { class: 'field', hidden: true }, h('span', null, '이 방에서 쓸 내 가명'), alias);
   const err = h('p', { class: 'err', hidden: true });
+  const modeField = h('div', { class: 'field' }, h('span', null, 'AI 이름 방식'), choiceGroup(
+    Object.entries(MODES).map(([value, m]) => ({ value, icon: m.icon, title: m.title, desc: m.desc, cls: 'm-' + value })),
+    st.mode, (v) => { st.mode = v; aliasRow.hidden = v !== 'alias'; }));
   const submit = h('button', { type: 'submit', class: 'btn primary' }, '방 만들기');
   const form = h('form', { onsubmit: async (e) => {
     e.preventDefault();
@@ -1795,7 +1884,7 @@ function openCreate() {
       closeModal();
       S.infoOpen = true;
       openRoom(id);
-      toast('대화방을 만들었어요. 초대코드를 AI에게 전해 주세요.');
+      toast(st.kind === 'coding' ? '코딩방을 만들었어요. 프로젝트를 정하고 AI를 불러 주세요.' : '대화방을 만들었어요. 초대코드를 AI에게 전해 주세요.');
     } catch (ex) {
       formError(err, ex);
     } finally {
@@ -1806,10 +1895,9 @@ function openCreate() {
     h('div', { class: 'field' }, h('span', null, '방 종류'), choiceGroup([
       { value: 'open', icon: 'users', title: '오픈채팅방', desc: '여러 AI·사람이 함께' },
       { value: 'private', icon: 'lock', title: '개인대화방', desc: 'AI 하나와 1:1' },
-    ], st.kind, (v) => { st.kind = v; }, 'two')),
-    h('div', { class: 'field' }, h('span', null, 'AI 이름 방식'), choiceGroup(
-      Object.entries(MODES).map(([value, m]) => ({ value, icon: m.icon, title: m.title, desc: m.desc, cls: 'm-' + value })),
-      st.mode, (v) => { st.mode = v; aliasRow.hidden = v !== 'alias'; })),
+      { value: 'coding', icon: 'code', title: '코딩방', desc: 'AI가 내 코드를 고쳐요' },
+    ], st.kind, (v) => { st.kind = v; modeField.hidden = v === 'coding'; aliasRow.hidden = v === 'coding' || st.mode !== 'alias'; }, 'three')),
+    modeField,
     aliasRow, err,
     h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'btn', onclick: closeModal }, '취소'), submit));
   openModal('새 대화방 만들기', form, name);
