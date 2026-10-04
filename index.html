@@ -285,6 +285,14 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .mcp-item input { margin-top: 4px; }
 .mcp-item .fname { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; }
 .mcp-item .tag { margin-left: 6px; }
+.mcp-item { padding: 9px 4px; border-top: 1px solid var(--line); align-items: center; }
+.mcp-icon { position: relative; display: grid; place-items: center; flex: none; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); color: var(--ink-2); font-weight: 700; overflow: hidden; }
+.mcp-icon img { position: absolute; inset: 0; width: 22px; height: 22px; margin: auto; }
+.mcp-item .ex { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--ink-2); }
+.mcp-item .ex::before { content: "말해 보기: "; color: var(--ink-3); }
+.mcp-item .need { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--accent); }
+.tag.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.tag.key { background: var(--accent-soft); color: var(--accent); }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .pick { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; font-weight: 600; }
 .pick.on { border-color: var(--ink); background: var(--panel-2); }
@@ -1409,6 +1417,17 @@ const trustMcp = () => trustBox('MCP 를 연결하기 전에', '주의: MCP 서�
   'API 키가 필요한 것은 AI를 켤 때 CMD 창에서 물어봅니다. 키는 그 컴퓨터에만 저장되니 채팅에는 적지 마세요.',
   'Claude 와 Copilot 에서만 동작합니다.',
 ], '알겠어요, 계속');
+// MCP 아이콘: 그 서비스 사이트의 아이콘을 보여 주고, 못 가져오면 이름 첫 글자를 보여 준다
+function mcpIcon(c) {
+  const box = h('span', { class: 'mcp-icon' }, [...String(c.name)][0] || '?');
+  if (c.site) {
+    const img = h('img', { alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', src: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(c.site)}&sz=64` });
+    img.addEventListener('load', () => { box.firstChild.textContent = ''; });
+    img.addEventListener('error', () => img.remove());
+    box.append(img);
+  }
+  return box;
+}
 // roomId 가 있으면 그 방의 MCP, 없으면 설정의 기본 MCP 를 고른다
 async function openMcp(roomId) {
   if (!store.get('mcpOk')) {
@@ -1417,23 +1436,28 @@ async function openMcp(roomId) {
   }
   let catalog;
   try { catalog = await loadCatalog(); } catch (err) { return fail(err); }
-  const all = mcpCustom().map((c) => ({ id: 'custom:' + c.name, name: c.name, cat: '직접 추가', desc: c.command.join(' '), run: '', env: [], pkg: '' })).concat(catalog);
+  const all = mcpCustom().map((c) => ({ id: 'custom:' + c.name, name: c.name, cat: '직접 추가', desc: '직접 추가한 MCP · ' + c.command.join(' '), run: '', env: [], pkg: '', site: '', ex: '' })).concat(catalog);
   const picked = new Set(roomId ? mcpPicked(roomId) : list(store.get('mcpDefault')));
   const search = h('input', { type: 'text', placeholder: `MCP 검색 (${all.length}개)`, spellcheck: 'false' });
   const box = h('div', { class: 'pick-list mcp-list' });
   const count = h('span', { class: 'hint' });
   const draw = () => {
     const q = search.value.trim().toLowerCase();
-    const items = all.filter((c) => !q || `${c.id} ${c.name} ${c.desc} ${c.cat} ${c.pkg}`.toLowerCase().includes(q));
+    const items = all.filter((c) => !q || `${c.id} ${c.name} ${c.desc} ${c.cat} ${c.pkg} ${c.ex || ''}`.toLowerCase().includes(q));
     const nodes = [];
     let cat = '';
     for (const c of items) {
-      if (c.cat !== cat) { cat = c.cat; nodes.push(h('div', { class: 'mcp-cat' }, cat)); }
+      if (c.cat !== cat) { cat = c.cat; nodes.push(h('div', { class: 'mcp-cat' }, `${cat} · ${items.filter((x) => x.cat === cat).length}개`)); }
       const check = h('input', { type: 'checkbox', checked: picked.has(c.id) });
       check.addEventListener('change', () => { if (check.checked) picked.add(c.id); else picked.delete(c.id); count.textContent = `${picked.size}개 선택`; });
-      nodes.push(h('label', { class: 'mcp-item' }, check,
-        h('span', { class: 'fname' }, String(c.name), c.run === 'uvx' ? h('span', { class: 'tag' }, 'uv') : null,
-          h('small', null, String(c.desc) + (c.env && c.env.length ? ` · 필요한 키: ${c.env.join(', ')}` : '')))));
+      const needsKey = c.env && c.env.length;
+      nodes.push(h('label', { class: 'mcp-item' }, check, mcpIcon(c),
+        h('span', { class: 'fname' }, String(c.name),
+          c.run === 'uvx' ? h('span', { class: 'tag' }, 'uv 필요') : null,
+          needsKey ? h('span', { class: 'tag key' }, '키 필요') : c.run === 'npx' ? h('span', { class: 'tag ok' }, '바로 사용') : null,
+          h('small', null, String(c.desc)),
+          c.ex ? h('span', { class: 'ex' }, `"${c.ex}"`) : null,
+          needsKey ? h('span', { class: 'need' }, `AI를 켤 때 물어보는 키: ${c.env.join(', ')}${c.site ? ` (${c.site} 에서 발급)` : ''}`) : null)));
     }
     box.replaceChildren(...(nodes.length ? nodes : [h('p', { class: 'hint' }, '찾는 MCP 가 없어요. 「직접 추가」로 넣을 수 있어요.')]));
     count.textContent = `${picked.size}개 선택`;
