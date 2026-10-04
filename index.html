@@ -467,39 +467,7 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
-/* ── 차분한 기본 모양 ── */
-:root {
-  --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f7f8fa; --line: #e2e4e9; --chip: #eceef2;
-  --ink: #1c1e22; --ink-2: #555a63; --ink-3: #8a8f99;
-  --accent: #2563eb; --accent-soft: #e8effd;
-  --mine: #2563eb; --mine-ink: #ffffff; --bubble: #ffffff;
-  --shadow: 0 1px 2px rgba(16, 24, 40, .06);
-}
-:root[data-theme="dark"] {
-  --bg: #121316; --panel: #1a1c20; --panel-2: #202328; --line: #2c2f36; --chip: #262930;
-  --ink: #eceef2; --ink-2: #b3b8c2; --ink-3: #7c828d;
-  --accent: #5b8def; --accent-soft: #1f2a44;
-  --mine: #2f5fd0; --mine-ink: #ffffff; --bubble: #202328;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .4);
-}
 body { font-size: var(--fs, 15px); }
-.btn, .icon-btn, input[type=text], input[type=password], input[type=number] { border-radius: 8px; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.send { background: var(--accent); color: #fff; border-radius: 10px; }
-.logo { border-radius: 8px; background: var(--accent); color: #fff; }
-.logo b { color: #fff; opacity: .7; }
-.logo.lg { border-radius: 12px; }
-.auth-card, .modal-card { border-radius: 14px; }
-.room, .choice, .mode-card, .term, .code, .steps li { border-radius: 10px; }
-.ricon { border-radius: 10px; }
-.avatar.ai { border-radius: 9px; }
-.bubble { border-radius: 4px 12px 12px 12px; }
-.msg.mine .bubble { border-radius: 12px 4px 12px 12px; }
-.msg.cont .bubble { border-radius: 12px; }
-.composer { border-radius: 12px; box-shadow: none; }
-.chip { border-radius: 6px; }
-.tabs, .seg { border-radius: 8px; }
-.tabs button, .seg button { border-radius: 6px; }
 /* 대화 / 코드 탭 */
 .side-tabs { display: flex; gap: 4px; margin: 0 16px 10px; padding: 3px; border-radius: 9px; background: var(--chip); }
 .side-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 1; height: 32px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-3); font-size: 13px; font-weight: 600; }
