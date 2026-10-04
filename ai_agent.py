@@ -1392,33 +1392,80 @@ def load_catalog(site):
     return []
 
 
-def setup_mcp(ids, site, folder, data_dir):
-    """고른 MCP 서버들의 실행 설정 파일을 만든다. 반환: (설정 파일 경로, 켜진 서버 id 목록) 또는 None"""
+def find_runner(runner):
+    """npx / uvx 실행 파일을 찾는다. uvx 는 'pip install uv' 로 깔면 PATH 밖(파이썬 Scripts 폴더)에 있을 수 있다."""
+    found = shutil.which(runner)
+    if found or runner != "uvx":
+        return found
+    import sysconfig
+    for scheme in (None, f"{os.name}_user"):
+        try:
+            folder = sysconfig.get_path("scripts", scheme) if scheme else sysconfig.get_path("scripts")
+        except KeyError:
+            continue
+        for name in ("uvx.exe", "uvx"):
+            if os.path.isfile(os.path.join(folder, name)):
+                return os.path.join(folder, name)
+    return None
+
+
+def setup_mcp(ids, extra, site, folder, data_dir, interactive):
+    """고른 MCP 서버들의 실행 설정 파일을 만든다. 반환: (설정 파일 경로, 켜진 서버 id 목록) 또는 None
+    extra: 직접 추가한 서버들 [{"name", "command": [...], "env": {...}}]"""
     catalog = {c["id"]: c for c in load_catalog(site)}
-    if not catalog:
+    if ids and not catalog:
         die("MCP 목록(mcp_catalog.json)을 찾을 수 없습니다.")
+    keys_path = os.path.join(data_dir, "mcp-keys.json")   # 한 번 입력한 키는 이 컴퓨터에만 저장해 두고 다시 쓴다
+    keys = load_sessions(keys_path)
     servers = {}
+    for item in extra:   # 직접 추가한 서버: 적어 준 명령을 그대로 실행한다
+        name = re.sub(r"[^a-z0-9_-]", "", str(item.get("name", "")).lower())[:30]
+        command = [str(x) for x in item.get("command") or []]
+        if not name or not command:
+            continue
+        exe = find_runner(command[0]) or shutil.which(command[0])
+        if not exe:
+            log(f"MCP '{name}': '{command[0]}' 을(를) 찾을 수 없어 건너뜁니다.")
+            continue
+        if IS_WINDOWS and exe.lower().endswith((".cmd", ".bat")):
+            command = ["cmd", "/c", command[0], *command[1:]]
+        else:
+            command = [exe, *command[1:]]
+        servers[name] = {"command": command[0], "args": command[1:],
+                         "env": {str(k): str(v) for k, v in (item.get("env") or {}).items()}}
+        log(f"MCP 연결 (직접 추가): {name}")
     for mid in ids:
         item = catalog.get(mid)
         if not item:
             log(f"MCP '{mid}': 목록에 없는 이름이라 건너뜁니다.")
             continue
         runner = item["run"]   # npx(Node.js) 또는 uvx(파이썬 uv)
-        if not shutil.which(runner):
-            need = "Node.js (nodejs.org)" if runner == "npx" else "uv (docs.astral.sh/uv)"
+        exe = find_runner(runner)
+        if not exe:
+            need = "Node.js (nodejs.org)" if runner == "npx" else "uv ('3. uv 설치.bat' 을 실행)"
             log(f"MCP '{item['name']}': {runner} 가 없어 건너뜁니다. 먼저 {need} 를 설치해 주세요.")
             continue
-        missing = [k for k in item.get("env", []) if not os.environ.get(k)]
+        values = {}
+        for k in item.get("env", []):   # 필요한 키: 환경 변수 → 저장해 둔 값 → 지금 물어보기
+            value = os.environ.get(k) or keys.get(k)
+            if not value and interactive:
+                print(f"\nMCP '{item['name']}' 에는 {k} 가 필요합니다.")
+                value = getpass.getpass("  키를 붙여 넣고 Enter (화면에는 안 보입니다. 건너뛰려면 그냥 Enter): ").strip()
+                if value:
+                    keys[k] = value
+                    save_sessions(keys_path, keys)
+            if value:
+                values[k] = value
+        missing = [k for k in item.get("env", []) if k not in values]
         if missing:
-            log(f"MCP '{item['name']}': 환경 변수 {', '.join(missing)} 가 없어 건너뜁니다. "
-                "키를 발급받아 이 컴퓨터의 환경 변수로 넣어 주세요.")
+            log(f"MCP '{item['name']}': {', '.join(missing)} 가 없어 건너뜁니다.")
             continue
-        args = [re.sub(r"\$\{(\w+)\}", lambda m: os.environ.get(m.group(1), ""), a).replace("{folder}", folder)
+        args = [re.sub(r"\$\{(\w+)\}", lambda m: values.get(m.group(1), ""), a).replace("{folder}", folder)
                 for a in item.get("args", [])]
         launch = ["-y", item["pkg"], *args] if runner == "npx" else [item["pkg"], *args]
         # 윈도우에서 npx 는 cmd 를 거쳐야 실행된다
-        command, launch = ("cmd", ["/c", runner, *launch]) if IS_WINDOWS else (runner, launch)
-        servers[mid] = {"command": command, "args": launch, "env": {k: os.environ[k] for k in item.get("env", [])}}
+        command, launch = ("cmd", ["/c", runner, *launch]) if IS_WINDOWS and runner == "npx" else (exe, launch)
+        servers[mid] = {"command": command, "args": launch, "env": values}
         log(f"MCP 연결: {item['name']}")
     if not servers:
         return None
@@ -1501,6 +1548,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=180, help="CLI 응답 제한 시간(초) (기본 180)")
     ap.add_argument("--mcp", default="", help="AI에게 붙일 MCP 서버들 (쉼표로 구분, 예: fetch,time,github). "
                                               "목록은 mcp_catalog.json")
+    ap.add_argument("--mcp-add", action="append", default=[],
+                    help="직접 추가한 MCP 서버 (화면이 만들어 주는 값. 이름·실행 명령을 담은 base64)")
     ap.add_argument("--project", help="코딩방에서 AI가 고칠 내 컴퓨터의 폴더")
     ap.add_argument("--github", help="코딩방에서 AI가 고칠 GitHub 저장소 주소 (받아 와서 따로 만든 브랜치에서 작업)")
     ap.add_argument("--shell", action="store_true",
@@ -1616,11 +1665,20 @@ def main():
         print("=" * 60)
         print()
     mcp_ids = [x for x in re.split(r"[,\s]+", args.mcp.strip()) if x]
-    if mcp_ids:
+    mcp_extra = []
+    for blob in args.mcp_add:
+        try:
+            import base64
+            item = json.loads(base64.b64decode(blob + "=" * (-len(blob) % 4)).decode("utf-8"))
+            if isinstance(item, dict):
+                mcp_extra.append(item)
+        except ValueError:
+            log("직접 추가한 MCP 값을 읽지 못해 건너뜁니다. 화면의 명령을 다시 복사해 주세요.")
+    if mcp_ids or mcp_extra:
         if cli.kind not in ("claude", "copilot"):
             log(f"{cli.title} 은(는) MCP 연결을 지원하지 않아 건너뜁니다. (claude, copilot 만 지원)")
         else:
-            cli.mcp = setup_mcp(mcp_ids, args.site, work["dir"] if work else workdir, args.data)
+            cli.mcp = setup_mcp(mcp_ids, mcp_extra, args.site, work["dir"] if work else workdir, args.data, interactive)
             if cli.mcp:
                 print("  MCP 서버는 다른 곳에서 만든 프로그램입니다. 이 컴퓨터에서 실행되며, 대화 내용에 따라 AI가 그 도구를 씁니다.")
                 print("  처음 쓸 때는 프로그램을 내려받느라, 첫 대답에서는 도구가 아직 안 보일 수 있습니다. 한 번 더 말해 보세요.")

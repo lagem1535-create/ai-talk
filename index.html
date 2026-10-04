@@ -717,7 +717,7 @@ function icon(name) {
 
 const store = {
   get(k) { try { return localStorage.getItem('aitalk.' + k); } catch (_) { return null; } },
-  set(k, v) { try { localStorage.setItem('aitalk.' + k, v); } catch (_) {} },
+  set(k, v) { try { v == null ? localStorage.removeItem('aitalk.' + k) : localStorage.setItem('aitalk.' + k, v); } catch (_) {} },
 };
 const REPO_URL = 'https://github.com/lagem1535-create/ai-talk';   // ai_agent.py 를 받는 곳
 
@@ -909,6 +909,7 @@ onAuthStateChanged(auth, async (user) => {
       return showAuthError('AI 계정은 터미널의 ai_agent.py 로 로그인합니다.');
     }
     await ensureHandle(user.uid, profile);
+    await loadPrefs(user.uid);
     startSession(user.uid, profile);
   } catch (err) {
     console.warn(err);
@@ -1346,7 +1347,26 @@ function openRepoPicker(done) {
     h('p', { class: 'hint' }, '저장소는 AI를 켜는 컴퓨터로 받아 오며, 그 컴퓨터의 git 로그인으로 받고 올립니다.')), user);
   if (user.value) load();
 }
-// MCP: AI에게 붙여 주는 외부 도구. 방마다 고른 것을 이 브라우저에 기억하고, AI를 부르는 명령에 넣는다.
+// 설정을 계정에 저장한다 (다른 기기에서도 같은 설정). 이 브라우저에도 같이 적어 둔다.
+const SYNCED = ['theme', 'font', 'enter', 'tab', 'mcpDefault', 'mcpCustom'];
+function setPref(key, value) {
+  store.set(key, value);
+  if (S.uid && SYNCED.includes(key)) update(R('settings', S.uid), { [key]: value }).catch(() => {});
+}
+async function loadPrefs(uid) {   // 로그인하면 계정에 저장된 설정을 가져온다
+  try {
+    const saved = (await get(R('settings', uid))).val() || {};
+    for (const key of SYNCED) if (typeof saved[key] === 'string') store.set(key, saved[key]);
+  } catch (_) { /* 못 가져오면 이 브라우저의 설정을 쓴다 */ }
+  const theme = store.get('theme');
+  setTheme(theme === 'light' || theme === 'dark' ? theme : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  applySettings();
+  S.tab = store.get('tab') === 'code' ? 'code' : 'chat';
+}
+
+// MCP: AI에게 붙여 주는 외부 도구.
+//  - 목록에서 고르기: 설정의 '기본 MCP'(모든 방에 적용) 또는 방마다 따로
+//  - 직접 추가: 목록에 없는 서버를 실행 명령으로 등록 (이름이 custom: 으로 시작)
 let mcpCatalog = null;
 async function loadCatalog() {
   if (!mcpCatalog) {
@@ -1356,59 +1376,122 @@ async function loadCatalog() {
   }
   return mcpCatalog;
 }
-const mcpPicked = (roomId) => (store.get('mcp.' + roomId) || '').split(',').filter(Boolean);
-function trustMcp() {
+function mcpCustom() {
+  try { const list = JSON.parse(store.get('mcpCustom') || '[]'); return Array.isArray(list) ? list : []; } catch (_) { return []; }
+}
+const list = (text) => (text || '').split(',').filter(Boolean);
+// 이 방에 쓸 MCP: 방에서 따로 정했으면 그것, 아니면 설정의 기본 MCP
+const mcpPicked = (roomId) => (store.get('mcp.' + roomId) != null ? list(store.get('mcp.' + roomId)) : list(store.get('mcpDefault')));
+function mcpFlags(roomId) {   // AI를 부르는 명령에 붙일 옵션
+  const picked = mcpPicked(roomId);
+  const ids = picked.filter((x) => !x.startsWith('custom:'));
+  let flags = ids.length ? ` --mcp ${ids.join(',')}` : '';
+  for (const c of mcpCustom()) {
+    if (!picked.includes('custom:' + c.name)) continue;
+    const json = JSON.stringify({ name: c.name, command: c.command, env: c.env || {} });
+    flags += ' --mcp-add ' + btoa(String.fromCharCode(...new TextEncoder().encode(json))).replace(/=+$/, '');
+  }
+  return flags;
+}
+function trustBox(title, warn, points, okLabel) {   // 위험한 기능을 켜기 전의 확인 창
   return new Promise((resolve) => {
-    const yes = h('button', { type: 'button', class: 'btn primary danger', onclick: () => { modalDone = null; closeModal(); resolve(true); } }, '알겠어요, 계속');
-    openModal('MCP 를 연결하기 전에', h('div', { class: 'trust' },
-      h('p', { class: 'trust-warn' }, '주의: MCP 서버는 다른 곳에서 만든 프로그램입니다.'),
-      h('ul', null,
-        h('li', null, 'AI를 켜는 컴퓨터에 내려받아 실행됩니다. 목록은 설치 주소를 모아 둔 것일 뿐, 각 프로그램이 안전한지는 확인하지 못했습니다.'),
-        h('li', null, '대화방에서는 방에 있는 누구의 말로도 AI가 그 도구를 쓸 수 있습니다. 파일·명령·결제·메일처럼 힘이 센 도구는 믿는 사람만 있는 방에서 쓰세요.'),
-        h('li', null, 'API 키가 필요한 것은 그 컴퓨터의 환경 변수에 키를 넣어야 켜집니다. 키는 채팅에 적지 마세요.'),
-        h('li', null, 'Claude 와 Copilot 에서만 동작합니다.')),
+    const yes = h('button', { type: 'button', class: 'btn primary danger', onclick: () => { modalDone = null; closeModal(); resolve(true); } }, okLabel);
+    openModal(title, h('div', { class: 'trust' },
+      h('p', { class: 'trust-warn' }, warn),
+      h('ul', null, points.map((p) => h('li', null, p))),
       h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'btn', onclick: closeModal }, '취소'), yes)), yes);
     modalDone = resolve;
   });
 }
-async function openMcp(room) {
+const trustMcp = () => trustBox('MCP 를 연결하기 전에', '주의: MCP 서버는 다른 곳에서 만든 프로그램입니다.', [
+  'AI를 켜는 컴퓨터에 내려받아 실행됩니다. 목록은 설치 주소를 모아 둔 것일 뿐, 각 프로그램이 안전한지는 확인하지 못했습니다.',
+  '대화방에서는 방에 있는 누구의 말로도 AI가 그 도구를 쓸 수 있습니다. 파일·명령·결제·메일처럼 힘이 센 도구는 믿는 사람만 있는 방에서 쓰세요.',
+  'API 키가 필요한 것은 AI를 켤 때 CMD 창에서 물어봅니다. 키는 그 컴퓨터에만 저장되니 채팅에는 적지 마세요.',
+  'Claude 와 Copilot 에서만 동작합니다.',
+], '알겠어요, 계속');
+// roomId 가 있으면 그 방의 MCP, 없으면 설정의 기본 MCP 를 고른다
+async function openMcp(roomId) {
   if (!store.get('mcpOk')) {
     if (!(await trustMcp())) return;
     store.set('mcpOk', '1');
   }
   let catalog;
   try { catalog = await loadCatalog(); } catch (err) { return fail(err); }
-  const picked = new Set(mcpPicked(room.id));
-  const search = h('input', { type: 'text', placeholder: `MCP 검색 (${catalog.length}개)`, spellcheck: 'false' });
-  const list = h('div', { class: 'pick-list mcp-list' });
+  const all = mcpCustom().map((c) => ({ id: 'custom:' + c.name, name: c.name, cat: '직접 추가', desc: c.command.join(' '), run: '', env: [], pkg: '' })).concat(catalog);
+  const picked = new Set(roomId ? mcpPicked(roomId) : list(store.get('mcpDefault')));
+  const search = h('input', { type: 'text', placeholder: `MCP 검색 (${all.length}개)`, spellcheck: 'false' });
+  const box = h('div', { class: 'pick-list mcp-list' });
   const count = h('span', { class: 'hint' });
   const draw = () => {
     const q = search.value.trim().toLowerCase();
-    const items = catalog.filter((c) => !q || `${c.id} ${c.name} ${c.desc} ${c.cat} ${c.pkg}`.toLowerCase().includes(q));
+    const items = all.filter((c) => !q || `${c.id} ${c.name} ${c.desc} ${c.cat} ${c.pkg}`.toLowerCase().includes(q));
     const nodes = [];
     let cat = '';
     for (const c of items) {
       if (c.cat !== cat) { cat = c.cat; nodes.push(h('div', { class: 'mcp-cat' }, cat)); }
-      const box = h('input', { type: 'checkbox', checked: picked.has(c.id) });
-      box.addEventListener('change', () => { if (box.checked) picked.add(c.id); else picked.delete(c.id); count.textContent = `${picked.size}개 선택`; });
-      nodes.push(h('label', { class: 'mcp-item' }, box,
+      const check = h('input', { type: 'checkbox', checked: picked.has(c.id) });
+      check.addEventListener('change', () => { if (check.checked) picked.add(c.id); else picked.delete(c.id); count.textContent = `${picked.size}개 선택`; });
+      nodes.push(h('label', { class: 'mcp-item' }, check,
         h('span', { class: 'fname' }, String(c.name), c.run === 'uvx' ? h('span', { class: 'tag' }, 'uv') : null,
           h('small', null, String(c.desc) + (c.env && c.env.length ? ` · 필요한 키: ${c.env.join(', ')}` : '')))));
     }
-    list.replaceChildren(...(nodes.length ? nodes : [h('p', { class: 'hint' }, '찾는 MCP 가 없어요.')]));
+    box.replaceChildren(...(nodes.length ? nodes : [h('p', { class: 'hint' }, '찾는 MCP 가 없어요. 「직접 추가」로 넣을 수 있어요.')]));
     count.textContent = `${picked.size}개 선택`;
   };
   search.addEventListener('input', draw);
   draw();
-  openModal('MCP 연결', h('div', null, search, list,
-    h('p', { class: 'hint' }, '실행하려면 그 컴퓨터에 Node.js 가 있어야 하고, uv 표시가 있는 것은 uv 도 필요합니다. 키가 필요한 것은 환경 변수로 넣어 주세요.'),
+  const save = (value) => {
+    if (roomId) store.set('mcp.' + roomId, value); else setPref('mcpDefault', value);
+    closeModal();
+    const room = current();
+    if (room) renderInfo(room, true);
+    toast(roomId ? '이 방의 MCP 를 저장했어요. AI를 새 명령으로 다시 불러 주세요.' : '기본 MCP 를 저장했어요.');
+  };
+  openModal(roomId ? '이 방의 MCP 고르기' : '기본 MCP 고르기 (모든 방에 적용)', h('div', null, search, box,
+    h('p', { class: 'hint' }, '키가 필요한 것은 AI를 켤 때 CMD 창에서 물어봅니다. uv 표시가 있는 것은 「3. uv 설치.bat」을 먼저 실행하세요.'),
     h('div', { class: 'form-actions' }, count,
-      h('button', { type: 'button', class: 'btn', onclick: () => { picked.clear(); draw(); } }, '모두 해제'),
-      h('button', { type: 'button', class: 'btn primary', onclick: () => {
-        store.set('mcp.' + room.id, [...picked].join(','));
-        closeModal();
-        renderInfo(current(), true);
-      } }, '적용'))), search, true);
+      h('button', { type: 'button', class: 'btn', onclick: () => openHelp('mcp') }, '연결 방법'),
+      h('button', { type: 'button', class: 'btn', onclick: () => openMcpAdd(roomId) }, '직접 추가'),
+      roomId && store.get('mcp.' + roomId) != null ? h('button', { type: 'button', class: 'btn', onclick: () => { store.set('mcp.' + roomId, null); save(null); } }, '기본값 쓰기') : null,
+      h('button', { type: 'button', class: 'btn primary', onclick: () => save([...picked].join(',')) }, '저장'))), search, true);
+}
+// 목록에 없는 MCP 서버를 실행 명령으로 직접 등록한다
+async function openMcpAdd(roomId) {
+  if (!(await trustBox('MCP 직접 추가', '위험: 적어 준 명령이 AI를 켜는 컴퓨터에서 그대로 실행됩니다.', [
+    '잘 아는 MCP 서버의 실행 명령만 넣으세요. 인터넷에서 본 명령을 그대로 붙여 넣으면 해로운 프로그램이 실행될 수 있습니다.',
+    '명령과 키는 AI를 부르는 명령 안에 들어갑니다. 그 명령을 남에게 보여 주지 마세요.',
+  ], '알겠어요, 추가하기'))) return;
+  const name = h('input', { type: 'text', maxlength: 30, placeholder: '예: my-server (영문·숫자)', required: true, spellcheck: 'false' });
+  const command = h('input', { type: 'text', maxlength: 400, placeholder: '예: npx -y @modelcontextprotocol/server-everything', required: true, spellcheck: 'false' });
+  const env = h('input', { type: 'text', maxlength: 400, placeholder: '예: API_KEY=abc123 OTHER=xyz (없으면 비워 두기)', spellcheck: 'false' });
+  const err = h('p', { class: 'err', hidden: true });
+  openModal('MCP 직접 추가', h('form', { onsubmit: (e) => {
+    e.preventDefault();
+    const id = name.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    const parts = (command.value.match(/"[^"]*"|\S+/g) || []).map((p) => p.replace(/^"|"$/g, ''));
+    if (!id || !parts.length) return formError(err, userError('이름과 실행 명령을 적어 주세요.'));
+    const vars = {};
+    for (const pair of env.value.trim().split(/\s+/).filter(Boolean)) {
+      const at = pair.indexOf('=');
+      if (at < 1) return formError(err, userError('환경 변수는 이름=값 모양으로 적어 주세요.'));
+      vars[pair.slice(0, at)] = pair.slice(at + 1);
+    }
+    const items = mcpCustom().filter((c) => c.name !== id).concat([{ name: id, command: parts, env: vars }]);
+    setPref('mcpCustom', JSON.stringify(items));
+    const key = roomId ? 'mcp.' + roomId : 'mcpDefault';   // 추가한 것은 바로 선택해 둔다
+    const picked = new Set(roomId ? mcpPicked(roomId) : list(store.get('mcpDefault')));
+    picked.add('custom:' + id);
+    if (roomId) store.set(key, [...picked].join(',')); else setPref(key, [...picked].join(','));
+    closeModal();
+    const room = current();
+    if (room) renderInfo(room, true);
+    toast(`'${id}' 를 추가했어요.`);
+  } },
+    h('label', { class: 'field' }, h('span', null, '이름'), name),
+    h('label', { class: 'field' }, h('span', null, '실행 명령 (그 MCP 서버의 설명서에 나오는 명령)'), command),
+    h('label', { class: 'field' }, h('span', null, '환경 변수 (선택)'), env),
+    err,
+    h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'btn', onclick: closeModal }, '취소'), h('button', { type: 'submit', class: 'btn primary' }, '추가'))), name);
 }
 // 코딩방 작업 키: AI를 부르는 명령에 넣어 주는 비밀 값. 이 브라우저에만 저장하고 데이터베이스에는 올리지 않는다.
 // AI는 이 키로 서명한 지시만 따르므로, 다른 사람이 대화방 데이터를 고쳐도 내 컴퓨터의 파일을 건드릴 수 없다.
@@ -1541,7 +1624,7 @@ function openSettings() {
   const seg = (key, options, current, after) => {
     const box = h('div', { class: 'seg' });
     const draw = (value) => box.replaceChildren(...options.map(([v, label]) =>
-      h('button', { type: 'button', class: v === value ? 'on' : '', onclick: () => { store.set(key, v); draw(v); after(v); } }, label)));
+      h('button', { type: 'button', class: v === value ? 'on' : '', onclick: () => { setPref(key, v); draw(v); after(v); } }, label)));
     draw(current);
     return box;
   };
@@ -1549,7 +1632,7 @@ function openSettings() {
   const name = h('input', { type: 'text', maxlength: 20, value: S.me.name });
   const enter = store.get('enter') !== 'off';
   const enterSwitch = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(enter), 'aria-label': 'Enter 로 보내기',
-    onclick: () => { store.set('enter', enter ? 'off' : 'on'); openSettings(); } });
+    onclick: () => { setPref('enter', enter ? 'off' : 'on'); openSettings(); } });
   const savedTheme = store.get('theme');
   openModal('설정', h('div', null,
     h('div', { class: 'set-group' }, h('h4', null, '계정'),
@@ -1573,6 +1656,19 @@ function openSettings() {
       row('처음 여는 탭', '', seg('tab', [['chat', '대화'], ['code', '코드']], S.tab, setTab))),
     h('div', { class: 'set-group' }, h('h4', null, '입력'),
       row('Enter 로 보내기', enter ? '끄면 Enter 는 줄바꿈, Ctrl+Enter 로 보냅니다.' : '지금은 Ctrl+Enter 로 보냅니다.', enterSwitch)),
+    h('div', { class: 'set-group' }, h('h4', null, 'MCP (AI에게 붙이는 외부 도구)'),
+      h('p', { class: 'hint', style: 'margin:0 0 8px' }, `기본 MCP ${list(store.get('mcpDefault')).length}개 · 직접 추가 ${mcpCustom().length}개. 기본 MCP 는 모든 방의 AI 초대 명령에 들어갑니다.`),
+      h('div', { class: 'stack' },
+        h('button', { type: 'button', class: 'btn', onclick: () => openMcp(null) }, icon('plus'), '기본 MCP 고르기'),
+        h('button', { type: 'button', class: 'btn', onclick: () => openMcpAdd(null) }, icon('edit'), 'MCP 직접 추가'),
+        mcpCustom().map((c) => h('button', { type: 'button', class: 'btn', onclick: async () => {
+          if (!(await confirmBox('MCP 삭제', `직접 추가한 '${c.name}' 를 지울까요?`, '삭제', true))) return openSettings();
+          setPref('mcpCustom', JSON.stringify(mcpCustom().filter((x) => x.name !== c.name)));
+          setPref('mcpDefault', list(store.get('mcpDefault')).filter((x) => x !== 'custom:' + c.name).join(','));
+          openSettings();
+        } }, icon('trash'), `삭제: ${c.name}`)),
+        h('button', { type: 'button', class: 'btn', onclick: () => openHelp('mcp') }, icon('help'), 'MCP 연결 방법 보기'))),
+    h('p', { class: 'hint' }, '설정은 계정에 저장되어 다른 기기에서도 그대로 적용됩니다.'),
     h('div', { class: 'set-group' }, h('h4', null, '기타'),
       h('div', { class: 'stack' },
         h('button', { type: 'button', class: 'btn', onclick: () => openHelp() }, icon('help'), '설명서 보기'),
@@ -1761,7 +1857,7 @@ function renderInfo(room, force) {
         renderInfo(current(), true);
       } });
     const mcp = S.cli === 'agy' ? [] : mcpPicked(room.id);   // Antigravity 는 MCP 연결을 지원하지 않는다
-    if (mcp.length) cmd += ` --mcp ${mcp.join(',')}`;
+    if (mcp.length) cmd += mcpFlags(room.id);
     const ready = !room.coding || !!project;
 
     parts.push(h('section', { class: 'sec' },
@@ -1780,8 +1876,8 @@ function renderInfo(room, force) {
           h('small', null, '폴더 밖 작업, 설치, 설정 변경, 컴퓨터 끄기까지 AI가 묻지 않고 실행합니다.')), fullSwitch) : null,
         room.coding && !shellOk ? h('p', { class: 'hint' }, 'Antigravity 는 명령 실행 허용을 지원하지 않아요. Claude 나 Copilot 을 고르세요.') : null,
         S.cli === 'agy' ? null : h('div', { class: 'row' }, h('div', null, h('strong', null, 'MCP 연결'),
-          h('small', null, mcp.length ? `${mcp.length}개 연결: ${mcp.slice(0, 4).join(', ')}${mcp.length > 4 ? ' …' : ''}` : 'AI에게 검색·브라우저·DB 같은 외부 도구를 붙입니다.')),
-          h('button', { type: 'button', class: 'btn small', onclick: () => openMcp(room) }, mcp.length ? '바꾸기' : '고르기')),
+          h('small', null, mcp.length ? `${mcp.length}개 연결${store.get('mcp.' + room.id) == null ? ' (기본 MCP)' : ''}: ${mcp.slice(0, 4).map((x) => x.replace('custom:', '')).join(', ')}${mcp.length > 4 ? ' …' : ''}` : 'AI에게 검색·브라우저·DB 같은 외부 도구를 붙입니다.')),
+          h('button', { type: 'button', class: 'btn small', onclick: () => openMcp(room.id) }, mcp.length ? '바꾸기' : '고르기')),
         room.kind === 'private' ? null : h('label', { class: 'count-row' },
           h('span', null, `${cliTitle} 몇 개를 넣을까요? (1~${MAX_COUNT})`), countInput),
         ready ? h('div', { class: 'term' },
@@ -2341,6 +2437,29 @@ function manual() {
         '코딩방 위쪽의 물음표(?) 버튼으로 이 설명서를 다시 볼 수 있습니다.',
       ]],
     ]],
+    mcp: ['MCP', [
+      ['need', 'MCP 가 뭔가요?', [
+        'AI에게 붙여 주는 외부 도구입니다. 웹 검색, 브라우저 조종, 데이터베이스, 노션·슬랙 같은 것을 AI가 직접 쓸 수 있게 됩니다.',
+        '대화방과 코딩방 모두에서 쓸 수 있고, Claude 와 Copilot 에서 동작합니다.',
+        ['AI를 켜는 컴퓨터에 ', h('strong', null, 'Node.js'), ' 가 있어야 합니다. 목록에서 ', code('uv'), ' 표시가 붙은 것은 「3. uv 설치.bat」을 먼저 실행하세요.'],
+      ]],
+      ['invite', '고르고, 명령을 다시 복사해요', [
+        '설정(왼쪽 아래 내 계정) → 「기본 MCP 고르기」에서 고르면 모든 방에 적용됩니다.',
+        '방마다 다르게 하려면 대화방 정보의 「MCP 연결」에서 고릅니다.',
+        ['고르면 AI 초대 명령 끝에 ', code('--mcp 이름'), ' 이 붙습니다. 그 명령을 다시 복사해서 AI를 다시 부르세요.'],
+      ]],
+      ['cmd', '키가 필요하면 CMD 창에서 물어봐요', [
+        '「필요한 키」가 적힌 MCP 는 그 서비스에서 API 키를 발급받아야 합니다.',
+        'AI를 켜면 CMD 창이 키를 물어봅니다. 붙여 넣고 Enter 를 누르면 그 컴퓨터에 저장되어 다음부터는 묻지 않습니다.',
+        '키를 넣지 않고 Enter 만 누르면 그 MCP 만 건너뜁니다.',
+        '처음 쓸 때는 프로그램을 내려받느라 첫 대답에서 도구가 안 보일 수 있습니다. 한 번 더 말해 보세요.',
+      ]],
+      ['safe', '직접 추가와 주의할 점', [
+        ['목록에 없는 MCP 는 「직접 추가」에서 이름과 실행 명령(예: ', code('npx -y 패키지이름'), ')을 적어 등록합니다.'],
+        'MCP 서버는 다른 곳에서 만든 프로그램입니다. 믿을 수 있는 것만 연결하세요.',
+        '대화방에서는 방에 있는 누구의 말로도 AI가 그 도구를 씁니다. 파일·명령·결제·메일 같은 도구는 믿는 사람만 있는 방에서 쓰세요.',
+      ]],
+    ]],
     friends: ['친구', [
       ['addfriend', '친구를 추가해요', [
         '왼쪽 아래 「친구」 칸에 상대의 아이디를 치고 Enter 를 누르면 바로 친구가 됩니다.',
@@ -2508,7 +2627,7 @@ setTheme(document.documentElement.dataset.theme);
 
 $('#theme-btn').addEventListener('click', () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  store.set('theme', next);
+  setPref('theme', next);
   setTheme(next);
 });
 $('#tab-login').addEventListener('click', () => setAuthMode('login'));
