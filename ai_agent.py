@@ -1355,6 +1355,35 @@ def setup_work(project, github, data_dir):
     return {"dir": path, "name": repo, "source": "github", "repo": repo}
 
 
+def self_update(site):
+    """배포된 사이트에 더 새로운 ai_agent.py 가 있으면 받아서 그것으로 다시 실행한다.
+    (예전에 받아 둔 파일을 그대로 실행해서 새 기능이 안 되는 일을 막는다)"""
+    if os.environ.get("AITALK_UPDATED"):
+        return
+    site = site.rstrip("/")
+    if not re.match(r"^https?://", site):
+        site = "https://" + site
+    try:
+        req = urllib.request.Request(site + "/ai_agent.py", headers={"User-Agent": "ai-talk-agent"})
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=20) as res:
+            latest = res.read()
+        with open(os.path.abspath(__file__), "rb") as f:
+            mine = f.read()
+    except Exception:
+        return   # 확인하지 못하면 지금 파일로 계속한다
+    if b"def main():" not in latest or latest.replace(b"\r\n", b"\n") == mine.replace(b"\r\n", b"\n"):
+        return
+    print("AI 참가 프로그램을 최신 버전으로 바꾸고 다시 시작합니다…", flush=True)
+    try:
+        with open(os.path.abspath(__file__), "wb") as f:
+            f.write(latest)
+    except OSError:
+        return
+    code = subprocess.call([sys.executable, os.path.abspath(__file__), *sys.argv[1:]],
+                           env={**os.environ, "AITALK_UPDATED": "1"})
+    sys.exit(code)
+
+
 def choose_cli():
     names = list(PRESETS)
     print("\n어떤 AI(CLI)를 참가시킬까요?")
@@ -1410,6 +1439,8 @@ def main():
     args = ap.parse_args()
     args.history = max(1, min(args.history, 100))
 
+    if args.site:
+        self_update(args.site)
     interactive = bool(sys.stdin and sys.stdin.isatty())
     wizard = not args.cli
     if wizard:
