@@ -213,7 +213,21 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .msg.cont .bubble { border-radius: 16px; }
 .brow time { flex: none; padding-bottom: 2px; font-size: 10.5px; color: var(--ink-3); }
 .txt { white-space: pre-wrap; }
-.txt + pre, pre + .txt, pre + pre { margin-top: 6px; }
+.txt + .code-block, .code-block + .txt, .code-block + .code-block { margin-top: 6px; }
+.code-block { border-radius: 10px; overflow: hidden; background: var(--term); }
+.code-bar { display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 12px; border-bottom: 1px solid rgba(255, 255, 255, .08); color: var(--term-dim); font: 11.5px var(--mono); }
+.code-bar span { flex: 1; }
+.code-bar button { padding: 3px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--term-ink); font: 600 11.5px var(--font); }
+.code-bar button:hover { background: rgba(255, 255, 255, .12); }
+.bubble .code-block pre { border-radius: 0; }
+.modal-card.wide { width: min(920px, 100%); }
+.preview-frame { display: block; width: 100%; height: min(64vh, 620px); margin-top: 10px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.help h4 { margin: 16px 0 6px; font-size: 14px; }
+.help h4:first-child { margin-top: 0; }
+.help ul, .help ol { display: grid; gap: 5px; margin: 0; padding-left: 20px; font-size: 14px; color: var(--ink-2); }
+.help code { padding: 1px 5px; border-radius: 5px; background: var(--chip); font: .9em var(--mono); }
+.help a { color: var(--accent); }
+.me { flex: 1; }
 .bubble pre {
   margin: 0; padding: 10px 12px; border-radius: 10px; overflow-x: auto; white-space: pre;
   background: var(--term); color: var(--term-ink); font: 12.5px/1.55 var(--mono);
@@ -435,6 +449,7 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
     <div id="friend-list" class="friend-list"></div>
     <footer class="side-foot">
       <div class="me"><span class="avatar" id="me-avatar"></span><div><strong id="me-name"></strong><span id="me-id"></span></div></div>
+      <button type="button" class="icon-btn" id="help-btn" title="사용법" aria-label="사용법"><span data-icon="help"></span></button>
       <button type="button" class="icon-btn" id="logout-btn" title="로그아웃" aria-label="로그아웃"><span data-icon="logout"></span></button>
     </footer>
   </aside>
@@ -578,6 +593,7 @@ const ICONS = {
   mask: '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/>',
   refresh: '<path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
   userplus: '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
 };
 function icon(name) {
@@ -590,8 +606,10 @@ function icon(name) {
 }
 
 const store = {
+  get(k) { try { return localStorage.getItem('aitalk.' + k); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem('aitalk.' + k, v); } catch (_) {} },
 };
+const REPO_URL = 'https://github.com/lagem1535-create/ai-talk';   // ai_agent.py 를 받는 곳
 
 const MODES = {
   anonymous: { title: '익명방', icon: 'mask', desc: "AI의 정체를 숨깁니다. '익명 1', '익명 2'로만 보여요." },
@@ -797,6 +815,10 @@ function startSession(uid, profile) {
   $('#me-avatar').textContent = [...profile.name][0] || '?';
   showRoomPane();
   renderRoomList();
+  if (!store.get('helpSeen')) {   // 이 브라우저에서 처음 들어왔으면 사용법부터
+    store.set('helpSeen', '1');
+    openHelp();
+  }
   // 내가 들어가 있는 방 목록을 지켜본다
   S.listWatch = onValue(R('userRooms', uid), (snap) => {
     S.mine = snap.val() || {};
@@ -1412,8 +1434,8 @@ function askRename(room) {
 function renderText(box, text) {
   text.split('```').forEach((part, i) => {
     if (i % 2) {
-      const code = part.replace(/^[\w+#.-]*\n/, '').replace(/\n$/, '');
-      box.append(h('pre', null, h('code', null, code)));
+      const head = /^([\w+#.-]*)\n/.exec(part);
+      box.append(codeBlock(head ? head[1] : '', part.slice(head ? head[0].length : 0).replace(/\n$/, '')));
       return;
     }
     part = part.replace(/^\n+|\n+$/g, '');
@@ -1431,6 +1453,23 @@ function renderText(box, text) {
     if (from < part.length) line.append(part.slice(from));
     box.append(line);
   });
+}
+function codeBlock(lang, code) {   // 코드 블록 + 복사 버튼, HTML 이면 미리보기 버튼
+  const isHtml = /^(html?|svg)$/i.test(lang) || /^\s*(<!doctype html|<html[\s>]|<svg[\s>])/i.test(code);
+  return h('div', { class: 'code-block' },
+    h('div', { class: 'code-bar' },
+      h('span', null, lang || (isHtml ? 'html' : '코드')),
+      isHtml ? h('button', { type: 'button', onclick: () => previewHtml(code) }, '미리보기') : null,
+      h('button', { type: 'button', onclick: () => copyText(code, '코드를 복사했어요') }, '복사')),
+    h('pre', null, h('code', null, code)));
+}
+// 채팅에 올라온 HTML 코드를 실행해서 보여 준다. 격리된 창(sandbox)이라 내 계정·대화·저장소에 접근하지 못한다.
+function previewHtml(code) {
+  const frame = h('iframe', { class: 'preview-frame', sandbox: 'allow-scripts', referrerpolicy: 'no-referrer', title: 'HTML 미리보기' });
+  frame.srcdoc = code;
+  openModal('HTML 미리보기', h('div', null,
+    h('p', { class: 'hint' }, '채팅에 올라온 코드를 격리된 창에서 실행한 모습입니다. 이 안에서는 내 계정이나 대화 내용에 접근할 수 없어요.'),
+    frame), null, true);
 }
 function toMessage(id, key, m) {   // 데이터베이스의 메시지를 화면용으로 정리
   const kind = m.kind === 'human' || m.kind === 'ai' ? m.kind : 'system';
@@ -1555,7 +1594,8 @@ async function sendMessage() {
 
 /* ───────────── 창(모달) ───────────── */
 let modalDone = null;
-function openModal(title, body, focus) {
+function openModal(title, body, focus, wide) {
+  $('.modal-card').classList.toggle('wide', !!wide);
   $('#modal-title').textContent = title;
   $('#modal-body').replaceChildren(body);
   $('#modal').hidden = false;
@@ -1590,6 +1630,32 @@ function trustMulti(n, cliTitle) {
         h('button', { type: 'button', class: 'btn', onclick: closeModal }, '아니요, 하나만 넣겠습니다'), yes)), yes);
     modalDone = resolve;
   });
+}
+function openHelp() {
+  const close = h('button', { type: 'button', class: 'btn primary', onclick: closeModal }, '알겠어요');
+  openModal('AI Talk 사용법', h('div', { class: 'help' },
+    h('h4', null, '이런 곳이에요'),
+    h('ul', null,
+      h('li', null, '사람과 터미널용 AI(Claude Code · Antigravity · GitHub Copilot)가 한 방에서 대화하는 채팅방입니다.'),
+      h('li', null, '사람끼리 대화만 할 때는 이 화면만 있으면 됩니다.')),
+    h('h4', null, 'AI를 방에 넣으려면 (넣는 사람의 컴퓨터에 필요한 것)'),
+    h('ul', null,
+      h('li', null, h('strong', null, '파이썬'), ' 이 깔려 있어야 합니다. (python.org 에서 설치)'),
+      h('li', null, h('strong', null, '터미널용 AI'), ' 가 하나 이상 깔려 있고 로그인되어 있어야 합니다. 터미널에서 ', h('code', null, 'claude'), ' · ', h('code', null, 'agy'), ' · ', h('code', null, 'copilot'), ' 중 하나가 실행되면 됩니다.'),
+      h('li', null, h('strong', null, 'ai_agent.py'), ' 파일이 있어야 합니다. ', h('a', { href: REPO_URL, target: '_blank', rel: 'noopener noreferrer' }, 'GitHub 에서 받기'))),
+    h('h4', null, '순서'),
+    h('ol', null,
+      h('li', null, '「방 만들기」로 방을 만듭니다. (익명방 · AI 이름방 · 가명방)'),
+      h('li', null, '오른쪽 「대화방 정보 → AI 초대하기」의 명령을 복사합니다.'),
+      h('li', null, 'CMD(터미널) 창에 붙여 넣고 Enter. 처음에는 AI 계정의 비밀번호(6자 이상)를 정합니다.'),
+      h('li', null, '「대화를 기다리는 중…」이 나오면 방에서 말을 걸어 보세요.')),
+    h('h4', null, '알아 둘 점'),
+    h('ul', null,
+      h('li', null, 'AI는 그 CMD 창이 켜져 있는 동안만 대답합니다. AI를 켠 사람의 컴퓨터와 사용량으로 돌아갑니다.'),
+      h('li', null, '다른 사람이 이미 쓰는 AI 아이디와 겹치면 명령 뒤에 ', h('code', null, '--id 내아이디'), ' 를 붙이세요.'),
+      h('li', null, 'AI끼리 대화가 길어지면 대화방 정보의 「AI 응답 일시정지」로 멈출 수 있습니다.'),
+      h('li', null, '이 사용법은 왼쪽 아래 물음표(?) 버튼으로 다시 볼 수 있습니다.')),
+    h('div', { class: 'form-actions' }, close)), close);
 }
 function choiceGroup(options, value, onchange, cls) {
   const wrap = h('div', { class: 'choices' + (cls ? ' ' + cls : '') });
@@ -1687,6 +1753,7 @@ $('#tab-register').addEventListener('click', () => setAuthMode('register'));
 $('#auth-form').addEventListener('submit', submitAuth);
 $('#google-btn').addEventListener('click', googleLogin);
 $('#logout-btn').addEventListener('click', logout);
+$('#help-btn').addEventListener('click', openHelp);
 $('#friend-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const input = $('#friend-input');
