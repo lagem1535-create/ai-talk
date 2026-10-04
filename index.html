@@ -279,6 +279,12 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .mode-bar { display: flex; align-items: center; gap: 10px; margin: 0 16px 6px; font-size: 12.5px; color: var(--ink-3); }
 .mode-bar .seg { margin: 0; flex: none; }
 .mode-bar .seg button { padding: 4px 12px; }
+.mcp-list { margin-top: 10px; max-height: 46vh; }
+.mcp-cat { padding: 10px 2px 4px; font-size: 12px; font-weight: 700; color: var(--ink-3); }
+.mcp-item { display: flex; align-items: flex-start; gap: 10px; padding: 6px 2px; cursor: pointer; }
+.mcp-item input { margin-top: 4px; }
+.mcp-item .fname { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; }
+.mcp-item .tag { margin-left: 6px; }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .pick { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; font-weight: 600; }
 .pick.on { border-color: var(--ink); background: var(--panel-2); }
@@ -1340,6 +1346,70 @@ function openRepoPicker(done) {
     h('p', { class: 'hint' }, '저장소는 AI를 켜는 컴퓨터로 받아 오며, 그 컴퓨터의 git 로그인으로 받고 올립니다.')), user);
   if (user.value) load();
 }
+// MCP: AI에게 붙여 주는 외부 도구. 방마다 고른 것을 이 브라우저에 기억하고, AI를 부르는 명령에 넣는다.
+let mcpCatalog = null;
+async function loadCatalog() {
+  if (!mcpCatalog) {
+    const res = await fetch('mcp_catalog.json', { cache: 'no-store' });
+    if (!res.ok) throw userError('MCP 목록을 불러오지 못했어요.');
+    mcpCatalog = await res.json();
+  }
+  return mcpCatalog;
+}
+const mcpPicked = (roomId) => (store.get('mcp.' + roomId) || '').split(',').filter(Boolean);
+function trustMcp() {
+  return new Promise((resolve) => {
+    const yes = h('button', { type: 'button', class: 'btn primary danger', onclick: () => { modalDone = null; closeModal(); resolve(true); } }, '알겠어요, 계속');
+    openModal('MCP 를 연결하기 전에', h('div', { class: 'trust' },
+      h('p', { class: 'trust-warn' }, '주의: MCP 서버는 다른 곳에서 만든 프로그램입니다.'),
+      h('ul', null,
+        h('li', null, 'AI를 켜는 컴퓨터에 내려받아 실행됩니다. 목록은 설치 주소를 모아 둔 것일 뿐, 각 프로그램이 안전한지는 확인하지 못했습니다.'),
+        h('li', null, '대화방에서는 방에 있는 누구의 말로도 AI가 그 도구를 쓸 수 있습니다. 파일·명령·결제·메일처럼 힘이 센 도구는 믿는 사람만 있는 방에서 쓰세요.'),
+        h('li', null, 'API 키가 필요한 것은 그 컴퓨터의 환경 변수에 키를 넣어야 켜집니다. 키는 채팅에 적지 마세요.'),
+        h('li', null, 'Claude 와 Copilot 에서만 동작합니다.')),
+      h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'btn', onclick: closeModal }, '취소'), yes)), yes);
+    modalDone = resolve;
+  });
+}
+async function openMcp(room) {
+  if (!store.get('mcpOk')) {
+    if (!(await trustMcp())) return;
+    store.set('mcpOk', '1');
+  }
+  let catalog;
+  try { catalog = await loadCatalog(); } catch (err) { return fail(err); }
+  const picked = new Set(mcpPicked(room.id));
+  const search = h('input', { type: 'text', placeholder: `MCP 검색 (${catalog.length}개)`, spellcheck: 'false' });
+  const list = h('div', { class: 'pick-list mcp-list' });
+  const count = h('span', { class: 'hint' });
+  const draw = () => {
+    const q = search.value.trim().toLowerCase();
+    const items = catalog.filter((c) => !q || `${c.id} ${c.name} ${c.desc} ${c.cat} ${c.pkg}`.toLowerCase().includes(q));
+    const nodes = [];
+    let cat = '';
+    for (const c of items) {
+      if (c.cat !== cat) { cat = c.cat; nodes.push(h('div', { class: 'mcp-cat' }, cat)); }
+      const box = h('input', { type: 'checkbox', checked: picked.has(c.id) });
+      box.addEventListener('change', () => { if (box.checked) picked.add(c.id); else picked.delete(c.id); count.textContent = `${picked.size}개 선택`; });
+      nodes.push(h('label', { class: 'mcp-item' }, box,
+        h('span', { class: 'fname' }, String(c.name), c.run === 'uvx' ? h('span', { class: 'tag' }, 'uv') : null,
+          h('small', null, String(c.desc) + (c.env && c.env.length ? ` · 필요한 키: ${c.env.join(', ')}` : '')))));
+    }
+    list.replaceChildren(...(nodes.length ? nodes : [h('p', { class: 'hint' }, '찾는 MCP 가 없어요.')]));
+    count.textContent = `${picked.size}개 선택`;
+  };
+  search.addEventListener('input', draw);
+  draw();
+  openModal('MCP 연결', h('div', null, search, list,
+    h('p', { class: 'hint' }, '실행하려면 그 컴퓨터에 Node.js 가 있어야 하고, uv 표시가 있는 것은 uv 도 필요합니다. 키가 필요한 것은 환경 변수로 넣어 주세요.'),
+    h('div', { class: 'form-actions' }, count,
+      h('button', { type: 'button', class: 'btn', onclick: () => { picked.clear(); draw(); } }, '모두 해제'),
+      h('button', { type: 'button', class: 'btn primary', onclick: () => {
+        store.set('mcp.' + room.id, [...picked].join(','));
+        closeModal();
+        renderInfo(current(), true);
+      } }, '적용'))), search, true);
+}
 // 코딩방 작업 키: AI를 부르는 명령에 넣어 주는 비밀 값. 이 브라우저에만 저장하고 데이터베이스에는 올리지 않는다.
 // AI는 이 키로 서명한 지시만 따르므로, 다른 사람이 대화방 데이터를 고쳐도 내 컴퓨터의 파일을 건드릴 수 없다.
 const codeKey = (roomId) => store.get('codekey.' + roomId) || '';
@@ -1690,6 +1760,8 @@ function renderInfo(room, force) {
         if (shell) store.set('full.' + room.id, '0');   // 명령 실행을 끄면 '모든 명령 허용'도 꺼진다
         renderInfo(current(), true);
       } });
+    const mcp = S.cli === 'agy' ? [] : mcpPicked(room.id);   // Antigravity 는 MCP 연결을 지원하지 않는다
+    if (mcp.length) cmd += ` --mcp ${mcp.join(',')}`;
     const ready = !room.coding || !!project;
 
     parts.push(h('section', { class: 'sec' },
@@ -1707,6 +1779,9 @@ function renderInfo(room, force) {
         room.coding && shellOk ? h('div', { class: 'row' }, h('div', null, h('strong', null, '모든 명령 허용 (매우 위험)'),
           h('small', null, '폴더 밖 작업, 설치, 설정 변경, 컴퓨터 끄기까지 AI가 묻지 않고 실행합니다.')), fullSwitch) : null,
         room.coding && !shellOk ? h('p', { class: 'hint' }, 'Antigravity 는 명령 실행 허용을 지원하지 않아요. Claude 나 Copilot 을 고르세요.') : null,
+        S.cli === 'agy' ? null : h('div', { class: 'row' }, h('div', null, h('strong', null, 'MCP 연결'),
+          h('small', null, mcp.length ? `${mcp.length}개 연결: ${mcp.slice(0, 4).join(', ')}${mcp.length > 4 ? ' …' : ''}` : 'AI에게 검색·브라우저·DB 같은 외부 도구를 붙입니다.')),
+          h('button', { type: 'button', class: 'btn small', onclick: () => openMcp(room) }, mcp.length ? '바꾸기' : '고르기')),
         room.kind === 'private' ? null : h('label', { class: 'count-row' },
           h('span', null, `${cliTitle} 몇 개를 넣을까요? (1~${MAX_COUNT})`), countInput),
         ready ? h('div', { class: 'term' },

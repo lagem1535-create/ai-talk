@@ -57,6 +57,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200, f.read(), "application/json; charset=utf-8")
             except OSError:
                 return self.reply(404, b"{}", "application/json; charset=utf-8")
+        if path == "/mcp_catalog.json":   # MCP 서버 목록
+            try:
+                with open(os.path.join(BASE_DIR, "mcp_catalog.json"), "rb") as f:
+                    return self.reply(200, f.read(), "application/json; charset=utf-8")
+            except OSError:
+                return self.reply(404, b"[]", "application/json; charset=utf-8")
         if path not in ("/", "/index.html"):
             return self.reply(404, b"not found", "text/plain; charset=utf-8")
         try:
