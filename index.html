@@ -466,6 +466,62 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ── 차분한 기본 모양 ── */
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f7f8fa; --line: #e2e4e9; --chip: #eceef2;
+  --ink: #1c1e22; --ink-2: #555a63; --ink-3: #8a8f99;
+  --accent: #2563eb; --accent-soft: #e8effd;
+  --mine: #2563eb; --mine-ink: #ffffff; --bubble: #ffffff;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06);
+}
+:root[data-theme="dark"] {
+  --bg: #121316; --panel: #1a1c20; --panel-2: #202328; --line: #2c2f36; --chip: #262930;
+  --ink: #eceef2; --ink-2: #b3b8c2; --ink-3: #7c828d;
+  --accent: #5b8def; --accent-soft: #1f2a44;
+  --mine: #2f5fd0; --mine-ink: #ffffff; --bubble: #202328;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+}
+body { font-size: var(--fs, 15px); }
+.btn, .icon-btn, input[type=text], input[type=password], input[type=number] { border-radius: 8px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.send { background: var(--accent); color: #fff; border-radius: 10px; }
+.logo { border-radius: 8px; background: var(--accent); color: #fff; }
+.logo b { color: #fff; opacity: .7; }
+.logo.lg { border-radius: 12px; }
+.auth-card, .modal-card { border-radius: 14px; }
+.room, .choice, .mode-card, .term, .code, .steps li { border-radius: 10px; }
+.ricon { border-radius: 10px; }
+.avatar.ai { border-radius: 9px; }
+.bubble { border-radius: 4px 12px 12px 12px; }
+.msg.mine .bubble { border-radius: 12px 4px 12px 12px; }
+.msg.cont .bubble { border-radius: 12px; }
+.composer { border-radius: 12px; box-shadow: none; }
+.chip { border-radius: 6px; }
+.tabs, .seg { border-radius: 8px; }
+.tabs button, .seg button { border-radius: 6px; }
+/* 대화 / 코드 탭 */
+.side-tabs { display: flex; gap: 4px; margin: 0 16px 10px; padding: 3px; border-radius: 9px; background: var(--chip); }
+.side-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 1; height: 32px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-3); font-size: 13px; font-weight: 600; }
+.side-tabs button.on { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+.side-tabs .ic { width: 1.25em; height: 1.25em; }
+/* 프로젝트 */
+.proj-head { display: flex; align-items: center; gap: 6px; padding: 8px 6px 4px 10px; font-size: 12px; font-weight: 700; color: var(--ink-3); }
+.proj-head button.name { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.proj-head .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-head .icon-btn { width: 24px; height: 24px; font-size: 13px; }
+.proj-head .caret { transition: transform .15s; }
+.proj-head.closed .caret { transform: rotate(-90deg); }
+.side-label.with-btn { display: flex; align-items: center; justify-content: space-between; padding-right: 10px; }
+.side-label .icon-btn { width: 24px; height: 24px; font-size: 13px; }
+select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; }
+/* 설정 */
+button.me { border: 0; background: transparent; text-align: left; padding: 4px; border-radius: 8px; color: inherit; }
+button.me:hover { background: var(--panel-2); }
+.set-group { padding: 4px 0 14px; }
+.set-group h4 { margin: 10px 0 6px; font-size: 12px; font-weight: 700; color: var(--ink-3); letter-spacing: .04em; }
+.set-group .seg { margin-bottom: 0; flex: none; }
+.name-row { display: flex; gap: 6px; }
 </style>
 </head>
 <body>
@@ -509,7 +565,12 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
       <button type="button" class="btn primary" id="new-btn"><span data-icon="plus"></span>방 만들기</button>
       <button type="button" class="btn" id="join-btn"><span data-icon="key"></span>코드로 입장</button>
     </div>
-    <div class="side-label">대화방</div>
+    <div class="side-tabs" role="tablist">
+      <button type="button" id="tab-chat" role="tab" title="대화방" aria-label="대화방"><span data-icon="chat"></span>대화</button>
+      <button type="button" id="tab-code" role="tab" title="코딩방" aria-label="코딩방"><span data-icon="code"></span>코드</button>
+    </div>
+    <div class="side-label with-btn"><span id="list-label">대화방</span>
+      <button type="button" class="icon-btn" id="project-add" title="프로젝트 만들기" aria-label="프로젝트 만들기"><span data-icon="folder"></span></button></div>
     <nav id="room-list" class="room-list" aria-label="대화방 목록"></nav>
     <div class="side-label">친구</div>
     <form id="friend-form" class="friend-add" autocomplete="off">
@@ -518,7 +579,7 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
     </form>
     <div id="friend-list" class="friend-list"></div>
     <footer class="side-foot">
-      <div class="me"><span class="avatar" id="me-avatar"></span><div><strong id="me-name"></strong><span id="me-id"></span></div></div>
+      <button type="button" class="me" id="me-btn" title="설정" aria-label="설정 열기"><span class="avatar" id="me-avatar"></span><div><strong id="me-name"></strong><span id="me-id"></span></div></button>
       <button type="button" class="icon-btn" id="help-btn" title="설명서" aria-label="설명서"><span data-icon="help"></span></button>
       <button type="button" class="icon-btn" id="logout-btn" title="로그아웃" aria-label="로그아웃"><span data-icon="logout"></span></button>
     </footer>
@@ -762,6 +823,8 @@ const S = {
   msgWatch: null, listWatch: null,
   infoOpen: matchMedia('(min-width: 1181px)').matches,
   friends: {}, friendWatch: null,   // 친구 목록: 계정 id -> { name, kind, username }
+  tab: store.get('tab') === 'code' ? 'code' : 'chat',   // 왼쪽 목록의 탭: 대화 / 코드
+  projects: {}, roomProject: {}, projectWatch: null, roomProjectWatch: null,   // 프로젝트: id -> { name }, 방 id -> 프로젝트 id
   cli: 'claude', count: 1, authMode: 'login', pendingProfile: null, sending: false, timers: [],
 };
 const current = () => (S.cur == null ? null : S.byId.get(S.cur) || null);
@@ -895,6 +958,8 @@ function startSession(uid, profile) {
     openHelp();
   }
   // 내가 들어가 있는 방 목록을 지켜본다
+  S.projectWatch = onValue(R('projects', uid), (snap) => { S.projects = snap.val() || {}; renderRoomList(); }, fail);
+  S.roomProjectWatch = onValue(R('roomProject', uid), (snap) => { S.roomProject = snap.val() || {}; renderRoomList(); }, fail);
   S.listWatch = onValue(R('userRooms', uid), (snap) => {
     S.mine = snap.val() || {};
     for (const id of Object.keys(S.mine)) {
@@ -922,11 +987,14 @@ function stopSession() {
   if (S.listWatch) S.listWatch();
   if (S.msgWatch) S.msgWatch();
   if (S.friendWatch) S.friendWatch();
+  if (S.projectWatch) S.projectWatch();
+  if (S.roomProjectWatch) S.roomProjectWatch();
   for (const stop of S.watches.values()) stop();
   S.timers.forEach(clearInterval);
   Object.assign(S, {
     uid: null, me: null, mine: {}, raw: new Map(), watches: new Map(), rooms: [], byId: new Map(),
     cur: null, cache: new Map(), msgWatch: null, listWatch: null, timers: [], friends: {}, friendWatch: null,
+    projects: {}, roomProject: {}, projectWatch: null, roomProjectWatch: null,
   });
   closeModal();
   document.title = 'AI Talk';
@@ -1345,24 +1413,133 @@ function markRead(room) {
 }
 
 /* ───────────── 방 목록 ───────────── */
+function roomRow(r) {
+  const unread = r.id === S.cur && !document.hidden ? 0 : r.unread;
+  let last = '아직 메시지가 없어요';
+  if (r.typing.length) last = `${r.typing[0]} 님이 입력 중…`;
+  else if (r.last) last = r.last.kind === 'system' ? r.last.text : `${r.last.name}: ${r.last.text}`;
+  return h('button', { type: 'button', class: 'room' + (r.id === S.cur ? ' active' : ''), onclick: () => openRoom(r.id) },
+    h('span', { class: 'ricon m-' + r.name_mode }, icon(r.coding ? 'code' : r.kind === 'private' ? 'lock' : MODES[r.name_mode].icon)),
+    h('span', { class: 'rmain' }, h('span', { class: 'rtitle' }, r.name), h('span', { class: 'rlast' }, last)),
+    h('span', { class: 'rside' },
+      h('span', { class: 'rtime' }, r.last && r.last.ts ? listTime(r.last.ts) : ''),
+      unread ? h('span', { class: 'unread' }, unread > 99 ? '99+' : String(unread)) : null));
+}
+// 왼쪽 목록: 대화 탭에는 대화방, 코드 탭에는 코딩방. 프로젝트(방을 모아 두는 폴더)별로 묶어서 보여 준다.
 function renderRoomList() {
-  const list = $('#room-list');
-  if (!S.rooms.length) {
-    list.replaceChildren(h('div', { class: 'list-empty' }, '아직 대화방이 없어요.', h('br'), '방을 만들거나 초대코드로 들어가 보세요.'));
-    return;
+  const code = S.tab === 'code';
+  $('#tab-chat').classList.toggle('on', !code);
+  $('#tab-code').classList.toggle('on', code);
+  $('#list-label').textContent = code ? '코딩방' : '대화방';
+  const count = (flag) => S.rooms.filter((r) => r.coding === flag).reduce((n, r) => n + (r.id === S.cur && !document.hidden ? 0 : r.unread), 0);
+  for (const [id, n] of [['#tab-chat', count(false)], ['#tab-code', count(true)]]) {
+    const old = $(id).querySelector('.unread');
+    if (old) old.remove();
+    if (n) $(id).append(h('span', { class: 'unread' }, n > 99 ? '99+' : String(n)));
   }
-  list.replaceChildren(...S.rooms.map((r) => {
-    const unread = r.id === S.cur && !document.hidden ? 0 : r.unread;
-    let last = '아직 메시지가 없어요';
-    if (r.typing.length) last = `${r.typing[0]} 님이 입력 중…`;
-    else if (r.last) last = r.last.kind === 'system' ? r.last.text : `${r.last.name}: ${r.last.text}`;
-    return h('button', { type: 'button', class: 'room' + (r.id === S.cur ? ' active' : ''), onclick: () => openRoom(r.id) },
-      h('span', { class: 'ricon m-' + r.name_mode }, icon(r.kind === 'private' ? 'lock' : MODES[r.name_mode].icon)),
-      h('span', { class: 'rmain' }, h('span', { class: 'rtitle' }, r.name), h('span', { class: 'rlast' }, last)),
-      h('span', { class: 'rside' },
-        h('span', { class: 'rtime' }, r.last && r.last.ts ? listTime(r.last.ts) : ''),
-        unread ? h('span', { class: 'unread' }, unread > 99 ? '99+' : String(unread)) : null));
-  }));
+  const list = $('#room-list');
+  const rooms = S.rooms.filter((r) => r.coding === code);
+  const projects = Object.entries(S.projects).sort((a, b) => String(a[1].name).localeCompare(String(b[1].name), 'ko'));
+  const nodes = [];
+  for (const [pid, p] of projects) {
+    const inside = rooms.filter((r) => S.roomProject[r.id] === pid);
+    if (!inside.length && Object.values(S.roomProject).some((v) => v === pid)) continue;   // 다른 탭에만 방이 있는 프로젝트는 숨긴다
+    const closed = store.get('closed.' + pid) === '1';
+    nodes.push(h('div', { class: 'proj-head' + (closed ? ' closed' : '') },
+      h('button', { type: 'button', class: 'name', onclick: () => { store.set('closed.' + pid, closed ? '0' : '1'); renderRoomList(); } },
+        h('span', { class: 'caret' }, '▾'), h('span', null, `${p.name} (${inside.length})`)),
+      h('button', { type: 'button', class: 'icon-btn', title: '프로젝트 이름 바꾸기·삭제', 'aria-label': `${p.name} 프로젝트 관리`, onclick: () => openProject(pid) }, icon('edit'))));
+    if (!closed) nodes.push(...inside.map(roomRow));
+  }
+  const loose = rooms.filter((r) => !S.projects[S.roomProject[r.id]]);
+  if (projects.length && loose.length) nodes.push(h('div', { class: 'proj-head' }, h('span', null, '프로젝트 없음')));
+  nodes.push(...loose.map(roomRow));
+  if (!rooms.length) {
+    nodes.push(h('div', { class: 'list-empty' }, code ? '아직 코딩방이 없어요.' : '아직 대화방이 없어요.', h('br'), code ? '「방 만들기」에서 코딩방을 골라 보세요.' : '방을 만들거나 초대코드로 들어가 보세요.'));
+  }
+  list.replaceChildren(...nodes);
+}
+function setTab(tab) {
+  S.tab = tab;
+  store.set('tab', tab);
+  renderRoomList();
+}
+
+/* ───────────── 프로젝트 (방을 모아 두는 폴더, 나만 보임) ───────────── */
+function openProject(pid) {   // pid 가 없으면 새로 만들기
+  const p = pid ? S.projects[pid] : null;
+  const name = h('input', { type: 'text', maxlength: 30, value: p ? p.name : '', placeholder: '예: 학교 과제', required: true });
+  openModal(p ? '프로젝트 관리' : '새 프로젝트', h('form', { onsubmit: (e) => {
+    e.preventDefault();
+    const value = cleanName(name.value, 30);
+    if (!value) return;
+    (p ? update(R('projects', S.uid, pid), { name: value }) : set(push(R('projects', S.uid)), { name: value, created: SV })).then(closeModal, fail);
+  } },
+    h('label', { class: 'field' }, h('span', null, '프로젝트 이름'), name),
+    h('p', { class: 'hint' }, '프로젝트는 대화방을 모아 두는 폴더예요. 방을 넣으려면 그 방의 「대화방 정보 → 방 관리」에서 프로젝트를 고르세요. 나에게만 보입니다.'),
+    h('div', { class: 'form-actions' },
+      p ? h('button', { type: 'button', class: 'btn danger', onclick: async () => {
+        if (!(await confirmBox('프로젝트 삭제', `'${p.name}' 프로젝트를 지울까요? 안에 있던 방은 지워지지 않고 「프로젝트 없음」으로 나옵니다.`, '삭제', true))) return;
+        const changes = { [`projects/${S.uid}/${pid}`]: null };
+        for (const [rid, v] of Object.entries(S.roomProject)) if (v === pid) changes[`roomProject/${S.uid}/${rid}`] = null;
+        update(R(), changes).catch(fail);
+      } }, '삭제') : null,
+      h('button', { type: 'button', class: 'btn', onclick: closeModal }, '취소'),
+      h('button', { type: 'submit', class: 'btn primary' }, p ? '저장' : '만들기'))), name);
+}
+function projectSelect(room) {   // 대화방 정보에서 이 방을 어느 프로젝트에 넣을지 고른다
+  const select = h('select', { 'aria-label': '프로젝트' },
+    h('option', { value: '' }, '프로젝트 없음'),
+    Object.entries(S.projects).map(([pid, p]) => h('option', { value: pid, selected: S.roomProject[room.id] === pid }, String(p.name))));
+  select.addEventListener('change', () => set(R('roomProject', S.uid, room.id), select.value || null).catch(fail));
+  return select;
+}
+
+/* ───────────── 설정 (계정을 누르면 열림) ───────────── */
+function applySettings() {
+  document.documentElement.style.setProperty('--fs', { small: '14px', large: '17px' }[store.get('font')] || '15px');
+}
+function openSettings() {
+  const seg = (key, options, current, after) => {
+    const box = h('div', { class: 'seg' });
+    const draw = (value) => box.replaceChildren(...options.map(([v, label]) =>
+      h('button', { type: 'button', class: v === value ? 'on' : '', onclick: () => { store.set(key, v); draw(v); after(v); } }, label)));
+    draw(current);
+    return box;
+  };
+  const row = (title, note, control) => h('div', { class: 'row' }, h('div', null, h('strong', null, title), note ? h('small', null, note) : null), control);
+  const name = h('input', { type: 'text', maxlength: 20, value: S.me.name });
+  const enter = store.get('enter') !== 'off';
+  const enterSwitch = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(enter), 'aria-label': 'Enter 로 보내기',
+    onclick: () => { store.set('enter', enter ? 'off' : 'on'); openSettings(); } });
+  const savedTheme = store.get('theme');
+  openModal('설정', h('div', null,
+    h('div', { class: 'set-group' }, h('h4', null, '계정'),
+      h('form', { class: 'name-row', onsubmit: (e) => {
+        e.preventDefault();
+        const value = cleanName(name.value, 20);
+        if (!value) return;
+        update(R('users', S.uid), { name: value }).then(() => {
+          S.me.name = value;
+          $('#me-name').textContent = value;
+          $('#me-avatar').textContent = [...value][0] || '?';
+          toast('이름을 바꿨어요. 새로 들어가는 방부터 이 이름으로 보여요.');
+        }, fail);
+      } }, name, h('button', { type: 'submit', class: 'btn' }, '이름 바꾸기')),
+      h('p', { class: 'hint' }, `내 아이디: ${S.me.username ? '@' + S.me.username : '(없음)'} · 친구가 이 아이디로 나를 추가할 수 있어요.`)),
+    h('div', { class: 'set-group' }, h('h4', null, '화면'),
+      row('테마', '', seg('theme', [['light', '밝게'], ['dark', '어둡게'], ['system', '시스템']],
+        savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : 'system',
+        (v) => setTheme(v === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : v))),
+      row('글자 크기', '', seg('font', [['small', '작게'], ['normal', '보통'], ['large', '크게']], store.get('font') || 'normal', applySettings)),
+      row('처음 여는 탭', '', seg('tab', [['chat', '대화'], ['code', '코드']], S.tab, setTab))),
+    h('div', { class: 'set-group' }, h('h4', null, '입력'),
+      row('Enter 로 보내기', enter ? '끄면 Enter 는 줄바꿈, Ctrl+Enter 로 보냅니다.' : '지금은 Ctrl+Enter 로 보냅니다.', enterSwitch)),
+    h('div', { class: 'set-group' }, h('h4', null, '기타'),
+      h('div', { class: 'stack' },
+        h('button', { type: 'button', class: 'btn', onclick: () => openHelp() }, icon('help'), '설명서 보기'),
+        h('button', { type: 'button', class: 'btn', onclick: () => openProject() }, icon('folder'), '새 프로젝트 만들기'),
+        h('button', { type: 'button', class: 'btn danger', onclick: logout }, icon('logout'), '로그아웃')))));
 }
 
 /* ───────────── 대화방 열기 ───────────── */
@@ -1381,6 +1558,8 @@ function openRoom(id) {
   if (S.cur != null && S.cache.has(S.cur)) S.cache.get(S.cur).draft = input.value;
   if (S.msgWatch) S.msgWatch();
   S.cur = id;
+  const opened = S.byId.get(id);
+  if (opened) S.tab = opened.coding ? 'code' : 'chat';
   document.body.classList.add('in-room');
   input.value = cacheOf(id).draft;
   autosize();
@@ -1468,7 +1647,7 @@ function renderChrome(room) {
 function renderInfo(room, force) {
   const box = $('#info-body');
   const sig = JSON.stringify([room.id, room.name, room.code, room.kind, room.is_dm, room.name_mode, room.is_owner,
-    room.ai_paused, room.ai_chain_limit, room.members, S.cli, S.count, S.friends]);
+    room.ai_paused, room.ai_chain_limit, room.members, S.cli, S.count, S.friends, S.projects, S.roomProject[room.id]]);
   if (!force && box.dataset.sig === sig) return;
   const focused = document.activeElement;
   if (!force && focused && focused.tagName === 'INPUT' && box.contains(focused)) return;   // 숫자를 고치는 중에는 다시 그리지 않는다
@@ -1630,6 +1809,9 @@ function renderInfo(room, force) {
 
   const act = (name, text, fn, cls) => h('button', { type: 'button', class: 'btn' + (cls ? ' ' + cls : ''), onclick: fn }, icon(name), text);
   parts.push(h('section', { class: 'sec' },
+    h('h4', null, '프로젝트'),
+    Object.keys(S.projects).length ? projectSelect(room)
+      : h('button', { type: 'button', class: 'btn', onclick: () => openProject() }, icon('folder'), '프로젝트 만들기'),
     h('h4', null, '방 관리'),
     h('div', { class: 'stack' },
       room.is_owner && !room.is_dm ? act('edit', '방 이름 바꾸기', () => askRename(room)) : null,
@@ -2197,14 +2379,14 @@ function formError(el, err) {
 }
 
 function openCreate() {
-  const st = { kind: 'open', mode: 'anonymous' };
+  const st = { kind: S.tab === 'code' ? 'coding' : 'open', mode: 'anonymous' };
   const friends = Object.entries(S.friends);
   const picked = new Set();
   const name = h('input', { type: 'text', maxlength: 40, placeholder: '예: AI 수다방', required: true });
   const alias = h('input', { type: 'text', maxlength: 20, placeholder: '비워 두면 자동으로 지어 줘요' });
   const aliasRow = h('label', { class: 'field', hidden: true }, h('span', null, '이 방에서 쓸 내 가명'), alias);
   const err = h('p', { class: 'err', hidden: true });
-  const modeField = h('div', { class: 'field' }, h('span', null, 'AI 이름 방식'), choiceGroup(
+  const modeField = h('div', { class: 'field', hidden: st.kind === 'coding' }, h('span', null, 'AI 이름 방식'), choiceGroup(
     Object.entries(MODES).map(([value, m]) => ({ value, icon: m.icon, title: m.title, desc: m.desc, cls: 'm-' + value })),
     st.mode, (v) => { st.mode = v; aliasRow.hidden = v !== 'alias'; }));
   const submit = h('button', { type: 'submit', class: 'btn primary' }, '방 만들기');
@@ -2292,6 +2474,11 @@ $('#auth-form').addEventListener('submit', submitAuth);
 $('#google-btn').addEventListener('click', googleLogin);
 $('#logout-btn').addEventListener('click', logout);
 $('#help-btn').addEventListener('click', () => openHelp());
+$('#me-btn').addEventListener('click', openSettings);
+$('#tab-chat').addEventListener('click', () => setTab('chat'));
+$('#tab-code').addEventListener('click', () => setTab('code'));
+$('#project-add').addEventListener('click', () => openProject());
+applySettings();
 $('#guide-btn').addEventListener('click', () => openHelp('coding'));
 $('#invite-btn').addEventListener('click', () => { if (S.cur != null) openInvite(S.cur); });
 $('#friend-form').addEventListener('submit', (e) => {
@@ -2315,6 +2502,7 @@ input.addEventListener('input', autosize);
 input.addEventListener('keydown', (e) => {
   // 한글을 조합하는 중의 Enter 는 글자 확정이므로 보내지 않는다
   if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+  if (store.get('enter') === 'off' && !e.ctrlKey) return;   // 설정에서 껐으면 Ctrl+Enter 로만 보낸다
   e.preventDefault();
   sendMessage();
 });
