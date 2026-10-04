@@ -807,6 +807,7 @@ const S = {
   friends: {}, friendWatch: null,   // 친구 목록: 계정 id -> { name, kind, username }
   tab: store.get('tab') === 'code' ? 'code' : 'chat',   // 왼쪽 목록의 탭: 대화 / 코드
   projects: {}, roomProject: {}, projectWatch: null, roomProjectWatch: null,   // 프로젝트: id -> { name }, 방 id -> 프로젝트 id
+  pc: null, pcWatch: null,   // 내 컴퓨터 연결 프로그램의 상태 { name, seen }
   cli: 'claude', count: 1, authMode: 'login', pendingProfile: null, sending: false, timers: [],
 };
 const current = () => (S.cur == null ? null : S.byId.get(S.cur) || null);
@@ -941,6 +942,11 @@ function startSession(uid, profile) {
     openHelp();
   }
   // 내가 들어가 있는 방 목록을 지켜본다
+  S.pcWatch = onValue(R('pc', uid, 'status'), (snap) => {
+    S.pc = snap.val();
+    const room = current();
+    if (room && S.infoOpen) renderInfo(room, true);
+  }, () => {});
   S.projectWatch = onValue(R('projects', uid), (snap) => { S.projects = snap.val() || {}; renderRoomList(); }, fail);
   S.roomProjectWatch = onValue(R('roomProject', uid), (snap) => { S.roomProject = snap.val() || {}; renderRoomList(); }, fail);
   S.listWatch = onValue(R('userRooms', uid), (snap) => {
@@ -971,13 +977,14 @@ function stopSession() {
   if (S.msgWatch) S.msgWatch();
   if (S.friendWatch) S.friendWatch();
   if (S.projectWatch) S.projectWatch();
+  if (S.pcWatch) S.pcWatch();
   if (S.roomProjectWatch) S.roomProjectWatch();
   for (const stop of S.watches.values()) stop();
   S.timers.forEach(clearInterval);
   Object.assign(S, {
     uid: null, me: null, mine: {}, raw: new Map(), watches: new Map(), rooms: [], byId: new Map(),
     cur: null, cache: new Map(), msgWatch: null, listWatch: null, timers: [], friends: {}, friendWatch: null,
-    projects: {}, roomProject: {}, projectWatch: null, roomProjectWatch: null,
+    projects: {}, roomProject: {}, projectWatch: null, roomProjectWatch: null, pc: null, pcWatch: null,
   });
   closeModal();
   document.title = 'AI Talk';
@@ -1355,8 +1362,56 @@ function openRepoPicker(done) {
     h('p', { class: 'hint' }, '저장소는 AI를 켜는 컴퓨터로 받아 오며, 그 컴퓨터의 git 로그인으로 받고 올립니다.')), user);
   if (user.value) load();
 }
+// 내 컴퓨터 연결: 컴퓨터에 pc_helper.py 를 켜 두면, 휴대폰에서도 AI를 부르는 명령을 컴퓨터에 대신 실행시킬 수 있다.
+// 컴퓨터 키는 이 브라우저에만 저장하고(계정·데이터베이스에 올리지 않음), 요청마다 이 키로 서명한다.
+const pcKey = () => store.get('pcKey') || '';
+const pcOnline = () => !!S.pc && now() - (Number(S.pc.seen) || 0) < 45000;
+async function runOnPc(cmd) {
+  if (!pcKey()) return toast('설정에서 내 컴퓨터를 먼저 연결해 주세요.', 'err');
+  if (!pcOnline()) return toast('컴퓨터가 꺼져 있거나 연결 프로그램이 실행 중이 아니에요.', 'err');
+  const tokens = (cmd.match(/"[^"]*"|\S+/g) || []).map((x) => x.replace(/^"|"$/g, ''));
+  const args = tokens.slice(tokens.findIndex((x) => x.startsWith('--')));   // python … ai_agent.py 뒤의 옵션들만 보낸다
+  if (!(await confirmBox('컴퓨터에서 대신 실행', `내 컴퓨터(${S.pc.name || 'PC'})에서 AI 참가 프로그램을 켭니다. 계속할까요?`, '실행'))) return;
+  const nonce = randomId(16);
+  const t = Math.round(now());
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(pcKey()), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const raw = await crypto.subtle.sign('HMAC', key, enc.encode(`${S.uid}\n${nonce}\n${t}\n${args.join('\x1f')}`));
+  const sig = [...new Uint8Array(raw)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const req = push(R('pc', S.uid, 'requests'));
+  try {
+    await set(req, { args, nonce, t, sig });
+  } catch (err) { return fail(err); }
+  toast('컴퓨터에 보냈어요. 잠시 기다려 주세요…');
+  const stop = onValue(req, (snap) => {   // 컴퓨터의 대답을 기다린다
+    const state = (snap.val() || {}).state;
+    if (!state) return;
+    stop();
+    clearTimeout(timer);
+    set(req, null).catch(() => {});
+    toast(state === 'started' ? '컴퓨터에서 AI를 켰어요. 곧 방에 들어옵니다.' : '컴퓨터가 요청을 받지 않았어요. 컴퓨터 키가 맞는지 확인해 주세요.', state === 'started' ? '' : 'err');
+  });
+  const timer = setTimeout(() => { stop(); set(req, null).catch(() => {}); toast('컴퓨터가 응답하지 않아요.', 'err'); }, 20000);
+}
+async function connectPc(value) {   // 위험한 기능이라 두 번 확인받는다
+  const key = value.trim();
+  if (key.length < 20) return toast('컴퓨터 키를 정확히 붙여 넣어 주세요.', 'err');
+  if (!(await trustBox('내 컴퓨터를 연결할까요?', '위험: 이 기기에서 내 컴퓨터에 AI를 켤 수 있게 됩니다.', [
+    '「컴퓨터에서 바로 실행」을 누르면, 켜져 있는 내 컴퓨터가 AI 참가 프로그램을 대신 실행합니다.',
+    '코딩방 옵션(파일 수정, 명령 실행, 모든 명령 허용)과 직접 추가한 MCP 명령도 그대로 실행됩니다.',
+    '컴퓨터 키는 이 기기에만 저장됩니다. 이 기기를 잃어버리거나 남이 쓰면 내 컴퓨터가 위험해집니다.',
+  ], '동의하고 계속'))) return;
+  if (!(await trustBox('한 번 더 확인합니다', '정말 연결할까요? 컴퓨터 앞에 없어도 이 기기에서 누르는 즉시 실행됩니다.', [
+    '공용 기기나 남과 같이 쓰는 브라우저에서는 연결하지 마세요.',
+    '쓰지 않을 때는 컴퓨터의 연결 프로그램 창을 닫아 두면 아무것도 실행되지 않습니다.',
+    '키가 새었다면 컴퓨터의 data/agent/pc-key.txt 를 지우고 연결 프로그램을 다시 켜서 새 키를 받으세요.',
+  ], '위험을 알고 연결'))) return;
+  store.set('pcKey', key);
+  toast('이 기기를 내 컴퓨터에 연결했어요.');
+  openSettings();
+}
 // 설정을 계정에 저장한다 (다른 기기에서도 같은 설정). 이 브라우저에도 같이 적어 둔다.
-const SYNCED = ['theme', 'font', 'enter', 'tab', 'mcpDefault', 'mcpCustom'];
+const SYNCED = ['theme', 'font', 'enter', 'tab', 'mcpDefault', 'mcpCustom', 'mcpOwn'];
 function setPref(key, value) {
   store.set(key, value);
   if (S.uid && SYNCED.includes(key)) update(R('settings', S.uid), { [key]: value }).catch(() => {});
@@ -1692,7 +1747,23 @@ function openSettings() {
           openSettings();
         } }, icon('trash'), `삭제: ${c.name}`)),
         h('button', { type: 'button', class: 'btn', onclick: () => openHelp('mcp') }, icon('help'), 'MCP 연결 방법 보기'))),
-    h('p', { class: 'hint' }, '설정은 계정에 저장되어 다른 기기에서도 그대로 적용됩니다.'),
+    h('div', { class: 'set-group' }, h('h4', null, '내 컴퓨터 연결 (휴대폰에서 대신 실행)'),
+      h('p', { class: 'hint', style: 'margin:0 0 8px' }, pcKey()
+        ? (pcOnline() ? `연결됨 · ${S.pc.name || '내 컴퓨터'} 가 켜져 있어요. AI 초대 명령 아래의 「컴퓨터에서 바로 실행」을 누르면 됩니다.` : '연결됨 · 지금은 컴퓨터가 꺼져 있거나 연결 프로그램이 실행 중이 아니에요.')
+        : '컴퓨터에 연결 프로그램을 켜 두면, 휴대폰에서 명령을 붙여 넣지 않고 버튼만 눌러 AI를 부를 수 있어요.'),
+      pcKey() ? h('button', { type: 'button', class: 'btn danger', onclick: () => { store.set('pcKey', null); toast('이 기기의 연결을 끊었어요.'); openSettings(); } }, icon('x'), '이 기기의 연결 끊기')
+        : (() => {
+          const key = h('input', { type: 'password', maxlength: 80, placeholder: '컴퓨터 키 붙여 넣기', autocomplete: 'off' });
+          const start = `python ${APP_DIR.startsWith('__') ? 'pc_helper.py' : `"${APP_DIR}\\pc_helper.py"`} --owner ${S.me.username || '내아이디'}`;
+          return [
+            h('p', { class: 'hint', style: 'margin:0 0 6px' }, '1. 컴퓨터의 CMD 창에서 아래 명령을 실행합니다. (경고를 두 번 확인하면 컴퓨터 키가 나옵니다)'),
+            h('div', { class: 'term' }, h('div', { class: 'term-line' }, h('span', { class: 'prompt' }, '$'), start.split(' ').map((w) => h('span', null, w))),
+              h('button', { type: 'button', class: 'icon-btn', title: '명령 복사', 'aria-label': '명령 복사', onclick: () => copyText(start, '명령을 복사했어요') }, icon('copy'))),
+            h('p', { class: 'hint', style: 'margin:8px 0 6px' }, '2. 나온 컴퓨터 키를 여기에 붙여 넣습니다. (기기마다 한 번씩)'),
+            h('form', { class: 'name-row', onsubmit: (e) => { e.preventDefault(); connectPc(key.value); } }, key, h('button', { type: 'submit', class: 'btn' }, '연결')),
+          ];
+        })()),
+    h('p', { class: 'hint' }, '설정은 계정에 저장되어 다른 기기에서도 그대로 적용됩니다. (컴퓨터 키는 기기에만 저장)'),
     h('div', { class: 'set-group' }, h('h4', null, '기타'),
       h('div', { class: 'stack' },
         h('button', { type: 'button', class: 'btn', onclick: () => openHelp() }, icon('help'), '설명서 보기'),
@@ -1882,6 +1953,8 @@ function renderInfo(room, force) {
       } });
     const mcp = S.cli === 'agy' ? [] : mcpPicked(room.id);   // Antigravity 는 MCP 연결을 지원하지 않는다
     if (mcp.length) cmd += mcpFlags(room.id);
+    const ownMcp = S.cli !== 'agy' && store.get('mcpOwn') === '1';   // 내 AI에 이미 연결해 둔 MCP 를 그대로 쓴다
+    if (ownMcp) cmd += ' --mcp-own';
     const ready = !room.coding || !!project;
 
     parts.push(h('section', { class: 'sec' },
@@ -1899,6 +1972,16 @@ function renderInfo(room, force) {
         room.coding && shellOk ? h('div', { class: 'row' }, h('div', null, h('strong', null, '모든 명령 허용 (매우 위험)'),
           h('small', null, '폴더 밖 작업, 설치, 설정 변경, 컴퓨터 끄기까지 AI가 묻지 않고 실행합니다.')), fullSwitch) : null,
         room.coding && !shellOk ? h('p', { class: 'hint' }, 'Antigravity 는 명령 실행 허용을 지원하지 않아요. Claude 나 Copilot 을 고르세요.') : null,
+        S.cli === 'agy' ? null : h('div', { class: 'row' }, h('div', null, h('strong', null, '내 AI의 MCP 그대로 쓰기'),
+          h('small', null, 'Claude·Copilot 에 이미 연결해 둔 MCP 를 따로 고르지 않고 그대로 씁니다.')),
+          h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(ownMcp), 'aria-label': '내 AI의 MCP 그대로 쓰기', onclick: async () => {
+            if (!ownMcp && !store.get('mcpOk')) {
+              if (!(await trustMcp())) return;
+              store.set('mcpOk', '1');
+            }
+            setPref('mcpOwn', ownMcp ? '0' : '1');
+            renderInfo(current(), true);
+          } })),
         S.cli === 'agy' ? null : h('div', { class: 'row' }, h('div', null, h('strong', null, 'MCP 연결'),
           h('small', null, mcp.length ? `${mcp.length}개 연결${store.get('mcp.' + room.id) == null ? ' (기본 MCP)' : ''}: ${mcp.slice(0, 4).map((x) => x.replace('custom:', '')).join(', ')}${mcp.length > 4 ? ' …' : ''}` : 'AI에게 검색·브라우저·DB 같은 외부 도구를 붙입니다.')),
           h('button', { type: 'button', class: 'btn small', onclick: () => openMcp(room.id) }, mcp.length ? '바꾸기' : '고르기')),
@@ -1908,6 +1991,9 @@ function renderInfo(room, force) {
           h('div', { class: 'term-line' }, h('span', { class: 'prompt' }, '$'), cmd.split(' ').map((word) => h('span', null, word))),
           h('button', { type: 'button', class: 'icon-btn', title: '명령 복사', 'aria-label': '명령 복사', onclick: () => copyText(cmd, '명령을 복사했어요') }, icon('copy')))
           : h('p', { class: 'hint' }, '「폴더 선택」으로 내 컴퓨터의 폴더를 고르거나, 「GitHub 연결」로 저장소를 고르면 명령이 나옵니다.'),
+        ready && pcKey() ? h('button', { type: 'button', class: 'btn block', style: 'margin-top:8px', disabled: !pcOnline(), onclick: () => runOnPc(cmd) },
+          icon('play'), pcOnline() ? `컴퓨터에서 바로 실행 (${S.pc.name || '내 컴퓨터'})` : '컴퓨터가 꺼져 있어요') : null,
+        ready && !pcKey() ? h('p', { class: 'hint' }, '휴대폰에서도 누르기만 하면 되게 하려면: 설정 → 「내 컴퓨터 연결」') : null,
         ready && APP_DIR.startsWith('__') ? h('p', { class: 'hint' }, '명령이 긴 이유: AI 참가 프로그램(ai_agent.py)을 이 사이트에서 받아서 바로 실행하기 때문입니다. 명령을 실행한 폴더에 ai_agent.py 와 data 폴더가 생깁니다.') : null,
         !ready ? null : h('p', { class: 'hint' }, `CMD 창에 이 한 줄만 붙여 넣고 Enter를 누르세요. ${exe} 는 이 명령이 알아서 켜고, AI에게 따로 말을 걸 필요는 없어요.`),
         !ready ? null : h('p', { class: 'hint' }, count > 1

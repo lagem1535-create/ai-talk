@@ -474,6 +474,7 @@ class Cli:
         self.code = preset.get("code")   # 코딩방에서 쓰는 실행 방법 (없으면 코딩방을 쓸 수 없는 CLI)
         self.kind = name    # claude / copilot / agy …
         self.mcp = None     # (MCP 설정 파일, 서버 id 들). main 에서 채운다
+        self.own = None     # 이 AI(CLI)에 이미 연결해 둔 MCP 서버 이름들. --mcp-own 일 때 채운다
         self.inline = any("{prompt}" in a for a in self.args)
         self.exe = find_exe(preset["names"], preset["fallbacks"])
         if not self.exe:
@@ -492,6 +493,18 @@ class Cli:
         if mode != "chat":
             args, system_flag, limit = self.code[mode], self.code["system_flag"], CODE_TIMEOUT
         argv = [self.exe] + [a.replace("{timeout}", str(int(limit))) for a in args]
+        if self.own:   # 내 AI에 이미 연결해 둔 MCP 를 그대로 쓴다
+            if self.kind == "claude":
+                argv = [a for a in argv if a != "--strict-mcp-config"]   # 내 설정의 MCP 를 불러오게 둔다
+                allow = ",".join("mcp__" + n for n in self.own)
+                if "--allowedTools" in argv:
+                    at = argv.index("--allowedTools") + 1
+                    argv[at] = argv[at] + "," + allow
+                elif mode != "full":
+                    argv += ["--allowedTools", allow]
+            elif self.kind == "copilot":
+                for n in self.own:
+                    argv += ["--allow-tool", n]
         if self.mcp:   # 고른 MCP 서버를 붙이고, 그 도구는 묻지 않고 쓰게 한다
             path, ids = self.mcp
             if self.kind == "claude":
@@ -928,7 +941,8 @@ class Agent:
             for m in pending:
                 self.log(f"[{name}] {m['name']}: {preview(m['text'])}")
             try:
-                out = self.cli.run(build_system(raw, mid, self.persona, self.cli.mcp[1] if self.cli.mcp else ()),
+                out = self.cli.run(build_system(raw, mid, self.persona,
+                                                (self.cli.mcp[1] if self.cli.mcp else []) + (self.cli.own or [])),
                                    build_prompt(label, msgs, read),
                                    tick=lambda: fb.db("PATCH", typing_path, {"label": label, "kind": "ai", "at": SV}))
             except CliLoginError:
@@ -1476,6 +1490,27 @@ def setup_mcp(ids, extra, site, folder, data_dir, interactive):
     return path, list(servers)
 
 
+def own_mcp(cli):
+    """이 AI(CLI)에 사용자가 이미 연결해 둔 MCP 서버 이름들을 찾는다."""
+    names = []
+    if cli.kind == "claude":
+        try:
+            out = subprocess.run([cli.exe, "mcp", "list"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL, timeout=60).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = b""
+        for line in decode(out).splitlines():
+            if ": " in line and not line.startswith(("Checking", " ")):
+                names.append(re.sub(r"[^A-Za-z0-9_-]", "_", line.split(": ", 1)[0].strip()))
+    elif cli.kind == "copilot":
+        try:
+            with open(os.path.expanduser("~/.copilot/mcp-config.json"), encoding="utf-8") as f:
+                names = list((json.load(f).get("mcpServers") or {}).keys())
+        except (OSError, ValueError):
+            pass
+    return [n for n in names if n]
+
+
 def self_update(site):
     """배포된 사이트에 더 새로운 ai_agent.py 가 있으면 받아서 그것으로 다시 실행한다.
     (예전에 받아 둔 파일을 그대로 실행해서 새 기능이 안 되는 일을 막는다)"""
@@ -1548,6 +1583,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=180, help="CLI 응답 제한 시간(초) (기본 180)")
     ap.add_argument("--mcp", default="", help="AI에게 붙일 MCP 서버들 (쉼표로 구분, 예: fetch,time,github). "
                                               "목록은 mcp_catalog.json")
+    ap.add_argument("--mcp-own", action="store_true",
+                    help="이 AI(Claude Code·Copilot)에 내가 이미 연결해 둔 MCP 를 그대로 쓴다 (따로 고를 필요 없음)")
     ap.add_argument("--mcp-add", action="append", default=[],
                     help="직접 추가한 MCP 서버 (화면이 만들어 주는 값. 이름·실행 명령을 담은 base64)")
     ap.add_argument("--project", help="코딩방에서 AI가 고칠 내 컴퓨터의 폴더")
@@ -1682,6 +1719,9 @@ def main():
             if cli.mcp:
                 print("  MCP 서버는 다른 곳에서 만든 프로그램입니다. 이 컴퓨터에서 실행되며, 대화 내용에 따라 AI가 그 도구를 씁니다.")
                 print("  처음 쓸 때는 프로그램을 내려받느라, 첫 대답에서는 도구가 아직 안 보일 수 있습니다. 한 번 더 말해 보세요.")
+    if args.mcp_own:
+        cli.own = own_mcp(cli)
+        log("내 AI에 연결된 MCP: " + (", ".join(cli.own) if cli.own else "찾지 못했습니다 (그 AI에 MCP 를 먼저 연결해 주세요)"))
     runners = []   # (agent, 시작할 때 이미 들어가 있던 방들)
     try:
         for username in usernames:
