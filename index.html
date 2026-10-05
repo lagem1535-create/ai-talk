@@ -1268,7 +1268,7 @@ function openInvite(roomId) {   // 지금 방에 친구 초대하기
         e.currentTarget.disabled = true;
         inviteFriend(roomId, uid).then(() => setTimeout(draw, 300), fail);
       } }, icon('plus'), '초대')))
-      : [h('p', { class: 'hint' }, Object.keys(S.friends).length ? '초대할 수 있는 친구가 모두 이 방에 있어요.' : '아직 친구가 없어요. 왼쪽 아래 「친구」 칸에 아이디를 입력해서 추가해 보세요.')]));
+      : [h('p', { class: 'hint' }, Object.keys(S.friends).length ? '초대할 수 있는 친구가 모두 이 방에 있어요.' : '아직 친구가 없어요. 왼쪽 아래 [친구] 칸에 아이디를 입력해서 추가해 보세요.')]));
   };
   draw();
   openModal(`'${room.name}' 방에 친구 초대`, h('div', null, list,
@@ -1326,7 +1326,7 @@ async function pickFolder() {
   }
   toast('폴더 선택 창을 띄웠어요. 안 보이면 작업 표시줄을 확인하세요.');
   const res = await fetch('pick-folder', { method: 'POST' });
-  if (!res.ok) throw userError('폴더 선택 창을 열지 못했어요. 「1. AI Talk 열기.bat」으로 화면 서버를 다시 켜 주세요.');
+  if (!res.ok) throw userError('폴더 선택 창을 열지 못했어요. [1. AI Talk 열기.bat]으로 화면 서버를 다시 켜 주세요.');
   return String((await res.json()).path || '').replace(/"/g, '');
 }
 // 코딩방: GitHub 아이디만 넣으면 공개 저장소 목록을 보여 주고, 눌러서 고른다
@@ -1467,7 +1467,7 @@ async function connectPc(value) {   // 위험한 기능이라 두 번 확인받�
   const key = value.trim();
   if (key.length < 20) return toast('컴퓨터 키를 정확히 붙여 넣어 주세요.', 'err');
   if (!(await trustBox('내 컴퓨터를 연결할까요?', '위험: 이 기기에서 내 컴퓨터에 AI를 켤 수 있게 됩니다.', [
-    '「컴퓨터에서 바로 실행」을 누르면, 켜져 있는 내 컴퓨터가 AI 참가 프로그램을 대신 실행합니다.',
+    '[컴퓨터에서 바로 실행]을 누르면, 켜져 있는 내 컴퓨터가 AI 참가 프로그램을 대신 실행합니다.',
     '코딩방 옵션(파일 수정, 명령 실행, 모든 명령 허용)과 직접 추가한 MCP 명령도 그대로 실행됩니다.',
     '컴퓨터 키는 이 기기에만 저장됩니다. 이 기기를 잃어버리거나 남이 쓰면 내 컴퓨터가 위험해집니다.',
   ], '동의하고 계속'))) return;
@@ -1584,7 +1584,7 @@ async function openMcp(roomId) {
           c.ex ? h('span', { class: 'ex' }, `"${c.ex}"`) : null,
           needsKey ? h('span', { class: 'need' }, `AI를 켤 때 물어보는 키: ${c.env.join(', ')}${c.site ? ` (${c.site} 에서 발급)` : ''}`) : null)));
     }
-    box.replaceChildren(...(nodes.length ? nodes : [h('p', { class: 'hint' }, '찾는 MCP 가 없어요. 「직접 추가」로 넣을 수 있어요.')]));
+    box.replaceChildren(...(nodes.length ? nodes : [h('p', { class: 'hint' }, '찾는 MCP 가 없어요. [직접 추가]로 넣을 수 있어요.')]));
     count.textContent = `${picked.size}개 선택`;
   };
   search.addEventListener('input', draw);
@@ -1597,7 +1597,7 @@ async function openMcp(roomId) {
     toast(roomId ? '이 방의 MCP 를 저장했어요. AI를 새 명령으로 다시 불러 주세요.' : '기본 MCP 를 저장했어요.');
   };
   openModal(roomId ? '이 방의 MCP 고르기' : '기본 MCP 고르기 (모든 방에 적용)', h('div', null, search, box,
-    h('p', { class: 'hint' }, '키가 필요한 것은 AI를 켤 때 CMD 창에서 물어봅니다. uv 표시가 있는 것은 「3. uv 설치.bat」을 먼저 실행하세요.'),
+    h('p', { class: 'hint' }, '키가 필요한 것은 AI를 켤 때 CMD 창에서 물어봅니다. uv 표시가 있는 것은 [3. uv 설치.bat]을 먼저 실행하세요.'),
     h('div', { class: 'form-actions' }, count,
       h('button', { type: 'button', class: 'btn', onclick: () => openHelp('mcp') }, '연결 방법'),
       h('button', { type: 'button', class: 'btn', onclick: () => openMcpAdd(roomId) }, '직접 추가'),
@@ -1725,7 +1725,7 @@ function renderRoomList() {
   if (projects.length && loose.length) nodes.push(h('div', { class: 'proj-head' }, h('span', null, '프로젝트 없음')));
   nodes.push(...loose.map(roomRow));
   if (!rooms.length) {
-    nodes.push(h('div', { class: 'list-empty' }, code ? '아직 코딩방이 없어요.' : '아직 대화방이 없어요.', h('br'), code ? '「방 만들기」에서 코딩방을 골라 보세요.' : '방을 만들거나 초대코드로 들어가 보세요.'));
+    nodes.push(h('div', { class: 'list-empty' }, code ? '아직 코딩방이 없어요.' : '아직 대화방이 없어요.', h('br'), code ? '[방 만들기]에서 코딩방을 골라 보세요.' : '방을 만들거나 초대코드로 들어가 보세요.'));
   }
   list.replaceChildren(...nodes);
 }
@@ -1746,10 +1746,10 @@ function openProject(pid) {   // pid 가 없으면 새로 만들기
     (p ? update(R('projects', S.uid, pid), { name: value }) : set(push(R('projects', S.uid)), { name: value, created: SV })).then(closeModal, fail);
   } },
     h('label', { class: 'field' }, h('span', null, '프로젝트 이름'), name),
-    h('p', { class: 'hint' }, '프로젝트는 대화방을 모아 두는 폴더예요. 방을 넣으려면 그 방의 「대화방 정보 → 방 관리」에서 프로젝트를 고르세요. 나에게만 보입니다.'),
+    h('p', { class: 'hint' }, '프로젝트는 대화방을 모아 두는 폴더예요. 방을 넣으려면 그 방의 [대화방 정보 → 방 관리]에서 프로젝트를 고르세요. 나에게만 보입니다.'),
     h('div', { class: 'form-actions' },
       p ? h('button', { type: 'button', class: 'btn danger', onclick: async () => {
-        if (!(await confirmBox('프로젝트 삭제', `'${p.name}' 프로젝트를 지울까요? 안에 있던 방은 지워지지 않고 「프로젝트 없음」으로 나옵니다.`, '삭제', true))) return;
+        if (!(await confirmBox('프로젝트 삭제', `'${p.name}' 프로젝트를 지울까요? 안에 있던 방은 지워지지 않고 [프로젝트 없음]으로 나옵니다.`, '삭제', true))) return;
         const changes = { [`projects/${S.uid}/${pid}`]: null };
         for (const [rid, v] of Object.entries(S.roomProject)) if (v === pid) changes[`roomProject/${S.uid}/${rid}`] = null;
         update(R(), changes).catch(fail);
@@ -1819,11 +1819,11 @@ function openSettings() {
         h('button', { type: 'button', class: 'btn', onclick: () => openHelp('mcp') }, icon('help'), 'MCP 연결 방법 보기'))),
     h('div', { class: 'set-group' }, h('h4', null, '내 컴퓨터 연결 (휴대폰에서 대신 실행)'),
       h('p', { class: 'hint', style: 'margin:0 0 8px' }, pcKey()
-        ? (pcOnline() ? `연결됨 · ${S.pc.name || '내 컴퓨터'} 가 켜져 있어요. AI 초대 명령 아래의 「컴퓨터에서 바로 실행」을 누르면 됩니다.` : '연결됨 · 지금은 컴퓨터가 꺼져 있거나 연결 프로그램이 실행 중이 아니에요.')
+        ? (pcOnline() ? `연결됨 · ${S.pc.name || '내 컴퓨터'} 가 켜져 있어요. AI 초대 명령 아래의 [컴퓨터에서 바로 실행]을 누르면 됩니다.` : '연결됨 · 지금은 컴퓨터가 꺼져 있거나 연결 프로그램이 실행 중이 아니에요.')
         : '컴퓨터에 연결 프로그램을 켜 두면, 휴대폰에서 명령을 붙여 넣지 않고 버튼만 눌러 AI를 부를 수 있어요.'),
       pcKey() ? h('div', { class: 'stack' },
         h('button', { type: 'button', class: 'btn', onclick: openPcTerminal }, icon('code'), '명령 직접 실행' + (S.pc && S.pc.commands ? '' : ' (컴퓨터에서 --commands 로 켜야 함)')),
-        h('p', { class: 'hint', style: 'margin:0' }, '컴퓨터 연결은 방마다 따로 켭니다. 대화방 정보의 「이 방에서 컴퓨터 연결 쓰기」 스위치를 켜세요.'),
+        h('p', { class: 'hint', style: 'margin:0' }, '컴퓨터 연결은 방마다 따로 켭니다. 대화방 정보의 [이 방에서 컴퓨터 연결 쓰기] 스위치를 켜세요.'),
         h('button', { type: 'button', class: 'btn danger', onclick: () => { store.set('pcKey', null); toast('이 기기의 연결을 끊었어요.'); openSettings(); } }, icon('x'), '이 기기의 연결 끊기'))
         : (() => {
           const key = h('input', { type: 'password', maxlength: 80, placeholder: '컴퓨터 키 붙여 넣기', autocomplete: 'off' });
@@ -1966,7 +1966,7 @@ function renderInfo(room, force) {
         h('span', { class: 'cicon' }, icon('code')),
         h('div', null,
           h('strong', null, '코딩방'),
-          h('small', null, '할 일을 적으면 AI가 코드를 읽고 계획을 보여 줍니다. 「계획대로 실행」을 눌러야 파일을 고칩니다. AI가 여럿이면 각자 계획을 내고, 고른 AI만 고칩니다.'),
+          h('small', null, '할 일을 적으면 AI가 코드를 읽고 계획을 보여 줍니다. [계획대로 실행]을 눌러야 파일을 고칩니다. AI가 여럿이면 각자 계획을 내고, 고른 AI만 고칩니다.'),
           h('button', { type: 'button', class: 'btn small', style: 'margin-top:8px', onclick: () => openHelp('coding') }, icon('help'), '코딩방 설명서')))
       : h('div', { class: 'mode-card m-' + room.name_mode },
         h('span', { class: 'cicon' }, icon(mode.icon)),
@@ -2068,14 +2068,14 @@ function renderInfo(room, force) {
         ready ? h('div', { class: 'term' },
           h('div', { class: 'term-line' }, h('span', { class: 'prompt' }, '$'), cmd.split(' ').map((word) => h('span', null, word))),
           h('button', { type: 'button', class: 'icon-btn', title: '명령 복사', 'aria-label': '명령 복사', onclick: () => copyText(cmd, '명령을 복사했어요') }, icon('copy')))
-          : h('p', { class: 'hint' }, '「폴더 선택」으로 내 컴퓨터의 폴더를 고르거나, 「GitHub 연결」로 저장소를 고르면 명령이 나옵니다.'),
+          : h('p', { class: 'hint' }, '[폴더 선택]으로 내 컴퓨터의 폴더를 고르거나, [GitHub 연결]로 저장소를 고르면 명령이 나옵니다.'),
         pcKey() ? h('div', { class: 'row' }, h('div', null, h('strong', null, '이 방에서 컴퓨터 연결 쓰기'),
           h('small', null, '켜면 이 방의 명령을 버튼 하나로 내 컴퓨터에서 실행할 수 있어요.')),
           h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(store.get('pcRoom.' + room.id) === '1'), 'aria-label': '이 방에서 컴퓨터 연결 쓰기',
             onclick: () => { store.set('pcRoom.' + room.id, store.get('pcRoom.' + room.id) === '1' ? '0' : '1'); renderInfo(current(), true); } })) : null,
         ready && pcKey() && store.get('pcRoom.' + room.id) === '1' ? h('button', { type: 'button', class: 'btn block', style: 'margin-top:8px', disabled: !pcOnline(), onclick: () => runOnPc(cmd) },
           icon('play'), pcOnline() ? `컴퓨터에서 바로 실행 (${S.pc.name || '내 컴퓨터'})` : '컴퓨터가 꺼져 있어요') : null,
-        ready && !pcKey() ? h('p', { class: 'hint' }, '휴대폰에서도 누르기만 하면 되게 하려면: 설정 → 「내 컴퓨터 연결」') : null,
+        ready && !pcKey() ? h('p', { class: 'hint' }, '휴대폰에서도 누르기만 하면 되게 하려면: 설정 → [내 컴퓨터 연결]') : null,
         ready && APP_DIR.startsWith('__') ? h('p', { class: 'hint' }, '명령이 긴 이유: AI 참가 프로그램(ai_agent.py)을 이 사이트에서 받아서 바로 실행하기 때문입니다. 명령을 실행한 폴더에 ai_agent.py 와 data 폴더가 생깁니다.') : null,
         !ready ? null : h('p', { class: 'hint' }, `CMD 창에 이 한 줄만 붙여 넣고 Enter를 누르세요. ${exe} 는 이 명령이 알아서 켜고, AI에게 따로 말을 걸 필요는 없어요.`),
         !ready ? null : h('p', { class: 'hint' }, count > 1
@@ -2083,7 +2083,7 @@ function renderInfo(room, force) {
           : '처음에는 AI 계정의 비밀번호(6자 이상)를 정하라고 물어봅니다. 창을 켜 두는 동안 AI가 방에 있습니다.'),
         room.coding ? [
           h('p', { class: 'hint' }, github
-            ? 'GitHub 저장소는 AI의 컴퓨터로 받아 와서 ai-talk-work 브랜치에서만 고칩니다. main 은 건드리지 않고, 「GitHub에 올리기」를 눌러야 올라갑니다.'
+            ? 'GitHub 저장소는 AI의 컴퓨터로 받아 와서 ai-talk-work 브랜치에서만 고칩니다. main 은 건드리지 않고, [GitHub에 올리기]를 눌러야 올라갑니다.'
             : '내 폴더는 AI가 그 자리에서 바로 고칩니다. 중요한 폴더라면 먼저 복사해 두거나 git 으로 관리하세요.'),
           shell ? h('p', { class: 'hint' }, '명령 실행을 켠 뒤에는 AI를 이 명령으로 다시 불러야 적용됩니다. (이미 켜 둔 AI는 창을 닫고 다시 실행)') : null,
           h('p', { class: 'hint' }, '명령에 들어 있는 --key 는 이 방의 작업 키입니다. 이 브라우저에서 보낸 지시만 AI가 따르니, 명령을 남에게 보여 주지 마세요.'),
@@ -2271,7 +2271,7 @@ function openSave(lang, code) {
       pcKey() ? h('button', { type: 'button', class: 'btn', onclick: () => toPc(false) }, icon('folder'), '내 컴퓨터에 저장 (문서 → AI Talk 저장)') : null,
       pcKey() ? h('button', { type: 'button', class: 'btn danger', onclick: () => toPc(true) }, icon('play'), '내 컴퓨터에 저장하고 실행') : null),
     pcKey() ? h('p', { class: 'hint' }, '실행은 컴퓨터의 연결 프로그램을 --commands 로 켰을 때만 됩니다. .py · .js · .bat · .ps1 은 실행하고, .html 등은 컴퓨터에서 엽니다.')
-      : h('p', { class: 'hint' }, '내 컴퓨터에 바로 저장하고 실행하려면 설정 → 「내 컴퓨터 연결」을 먼저 해 주세요.'),
+      : h('p', { class: 'hint' }, '내 컴퓨터에 바로 저장하고 실행하려면 설정 → [내 컴퓨터 연결]을 먼저 해 주세요.'),
     out), name);
 }
 // 채팅에 올라온 HTML 코드를 실행해서 보여 준다. 격리된 창(sandbox)이라 내 계정·대화·저장소에 접근하지 못한다.
@@ -2520,7 +2520,7 @@ function trustFull() {
         h('li', null, '프로젝트 폴더 밖의 파일을 읽고, 고치고, 지울 수 있습니다. 문서·사진·다른 프로젝트도 포함됩니다.'),
         h('li', null, '프로그램 설치·삭제, 윈도우 설정 변경, 컴퓨터 끄기·다시 시작 같은 시스템 명령도 실행합니다.'),
         h('li', null, '인터넷에서 파일을 받아 실행하거나, 내 파일을 밖으로 보낼 수도 있습니다.'),
-        h('li', null, '「명령 실행 허용」과 달리 "위험한 명령은 하지 말라"는 제한이 없습니다. AI가 실수하거나 코드 속 글에 속으면 되돌릴 수 없습니다.'),
+        h('li', null, '[명령 실행 허용]과 달리 "위험한 명령은 하지 말라"는 제한이 없습니다. AI가 실수하거나 코드 속 글에 속으면 되돌릴 수 없습니다.'),
         h('li', null, '실행 모드와 함께 쓰면 계획 확인 없이 바로 실행됩니다.')),
       h('p', null, '믿을 수 있는 내 프로젝트에서만, 필요할 때만 켜고, 끝나면 끄고 AI를 다시 불러 주세요.'),
       h('label', { style: 'display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;font-weight:600' }, agree, '위 내용을 읽었고, 생기는 일은 내가 책임집니다.'),
@@ -2630,41 +2630,41 @@ function manual() {
         [h('strong', null, 'ai_agent.py'), ' 파일이 있어야 합니다. ', h('a', { href: REPO_URL, target: '_blank', rel: 'noopener noreferrer' }, 'GitHub 에서 받기')],
       ]],
       ['invite', '방을 만들고 명령을 복사해요', [
-        '「방 만들기」로 방을 만듭니다. (익명방 · AI 이름방 · 가명방)',
-        '오른쪽 「대화방 정보 → AI 초대하기」에 나오는 명령을 복사합니다.',
+        '[방 만들기]로 방을 만듭니다. (익명방 · AI 이름방 · 가명방)',
+        '오른쪽 [대화방 정보 → AI 초대하기]에 나오는 명령을 복사합니다.',
       ]],
       ['cmd', 'CMD 창에 붙여 넣어요', [
         'CMD(터미널) 창에 붙여 넣고 Enter 를 누릅니다.',
         '처음에는 AI 계정의 비밀번호(6자 이상)를 정합니다.',
-        '「대화를 기다리는 중…」이 나오면 방에서 말을 걸어 보세요.',
+        '[대화를 기다리는 중…]이 나오면 방에서 말을 걸어 보세요.',
       ]],
       ['tips', '알아 둘 점', [
         'AI는 그 CMD 창이 켜져 있는 동안만 대답합니다. AI를 켠 사람의 컴퓨터와 사용량으로 돌아갑니다.',
         ['다른 사람이 쓰는 AI 아이디와 겹치면 명령 뒤에 ', code('--id 내아이디'), ' 를 붙이세요.'],
-        'AI끼리 대화가 길어지면 대화방 정보의 「AI 응답 일시정지」로 멈출 수 있습니다.',
+        'AI끼리 대화가 길어지면 대화방 정보의 [AI 응답 일시정지]로 멈출 수 있습니다.',
         '이 설명서는 왼쪽 아래 물음표(?) 버튼으로 다시 볼 수 있습니다.',
       ]],
     ]],
     coding: ['코딩방', [
       ['project', '코딩방을 만들고 프로젝트를 연결해요', [
-        '「방 만들기 → 코딩방」을 고릅니다. AI가 내 코드를 직접 고치는 방입니다.',
-        '대화방 정보의 「코딩할 AI 부르기」에서 「폴더 선택」으로 내 컴퓨터의 폴더를 고르거나, 「GitHub 연결」로 저장소를 고릅니다.',
+        '[방 만들기 → 코딩방]을 고릅니다. AI가 내 코드를 직접 고치는 방입니다.',
+        '대화방 정보의 [코딩할 AI 부르기]에서 [폴더 선택]으로 내 컴퓨터의 폴더를 고르거나, [GitHub 연결]로 저장소를 고릅니다.',
         '나온 명령을 CMD 창에 붙여 넣으면 AI가 그 프로젝트를 맡습니다.',
         'AI를 여러 개 넣어도 됩니다. 개수를 늘리거나, 다른 AI로 한 번 더 부르세요.',
       ]],
       ['plan', '할 일을 적으면 계획부터 보여 줘요', [
         '만들거나 고칠 것을 채팅으로 적으면, AI가 코드를 읽고 계획을 올립니다. 이때는 파일을 고치지 않습니다.',
         'AI가 여럿이면 각자 계획을 냅니다. 비교해 보고 마음에 드는 계획을 고르세요.',
-        '계획을 바꾸고 싶으면 의견을 적으면 다시 세웁니다. 그만두려면 「취소」.',
+        '계획을 바꾸고 싶으면 의견을 적으면 다시 세웁니다. 그만두려면 [취소].',
       ]],
       ['result', '승인하면 파일을 고쳐요', [
-        '「계획대로 실행」을 누르면 그 계획을 낸 AI만 파일을 고칩니다.',
+        '[계획대로 실행]을 누르면 그 계획을 낸 AI만 파일을 고칩니다.',
         '끝나면 무엇을 바꿨는지와 바뀐 파일을 알려 줍니다.',
-        ['GitHub 저장소는 ', code('ai-talk-work'), ' 브랜치에 커밋하고, 「GitHub에 올리기」를 눌러야 올라갑니다. main 은 건드리지 않습니다.'],
+        ['GitHub 저장소는 ', code('ai-talk-work'), ' 브랜치에 커밋하고, [GitHub에 올리기]를 눌러야 올라갑니다. main 은 건드리지 않습니다.'],
       ]],
       ['safe', '안전하게 쓰기', [
         ['명령에 들어 있는 ', code('--key'), ' 는 이 방의 작업 키입니다. 이 브라우저에서 보낸 지시만 AI가 따르니, 명령을 남에게 보여 주지 마세요.'],
-        '기본으로는 AI가 파일을 읽고 고치기만 하고, 연결한 폴더 밖은 건드리지 못합니다. 「명령 실행 허용」을 켜면 git·python 같은 명령도 실행하는데, 위험할 수 있어 켤 때 경고가 나옵니다.',
+        '기본으로는 AI가 파일을 읽고 고치기만 하고, 연결한 폴더 밖은 건드리지 못합니다. [명령 실행 허용]을 켜면 git·python 같은 명령도 실행하는데, 위험할 수 있어 켤 때 경고가 나옵니다.',
         '내 폴더를 맡길 때는 복사본을 두거나 git 으로 관리하세요. 되돌리기 기능은 따로 없습니다.',
         '코딩방 위쪽의 물음표(?) 버튼으로 이 설명서를 다시 볼 수 있습니다.',
       ]],
@@ -2673,44 +2673,57 @@ function manual() {
       ['need', 'MCP 가 뭔가요?', [
         'AI에게 붙여 주는 외부 도구입니다. 웹 검색, 브라우저 조종, 데이터베이스, 노션·슬랙 같은 것을 AI가 직접 쓸 수 있게 됩니다.',
         '대화방과 코딩방 모두에서 쓸 수 있고, Claude 와 Copilot 에서 동작합니다.',
-        ['AI를 켜는 컴퓨터에 ', h('strong', null, 'Node.js'), ' 가 있어야 합니다. 목록에서 ', code('uv'), ' 표시가 붙은 것은 「3. uv 설치.bat」을 먼저 실행하세요.'],
+        ['AI를 켜는 컴퓨터에 ', h('strong', null, 'Node.js'), ' 가 있어야 합니다. 목록에서 ', code('uv'), ' 표시가 붙은 것은 [3. uv 설치.bat]을 먼저 실행하세요.'],
       ]],
       ['invite', '고르고, 명령을 다시 복사해요', [
-        '설정(왼쪽 아래 내 계정) → 「기본 MCP 고르기」에서 고르면 모든 방에 적용됩니다.',
-        '방마다 다르게 하려면 대화방 정보의 「MCP 연결」에서 고릅니다.',
+        '설정(왼쪽 아래 내 계정) → [기본 MCP 고르기]에서 고르면 모든 방에 적용됩니다.',
+        '방마다 다르게 하려면 대화방 정보의 [MCP 연결]에서 고릅니다.',
         ['고르면 AI 초대 명령 끝에 ', code('--mcp 이름'), ' 이 붙습니다. 그 명령을 다시 복사해서 AI를 다시 부르세요.'],
       ]],
       ['cmd', '키가 필요하면 CMD 창에서 물어봐요', [
-        '「필요한 키」가 적힌 MCP 는 그 서비스에서 API 키를 발급받아야 합니다.',
+        '[필요한 키]가 적힌 MCP 는 그 서비스에서 API 키를 발급받아야 합니다.',
         'AI를 켜면 CMD 창이 키를 물어봅니다. 붙여 넣고 Enter 를 누르면 그 컴퓨터에 저장되어 다음부터는 묻지 않습니다.',
         '키를 넣지 않고 Enter 만 누르면 그 MCP 만 건너뜁니다.',
         '처음 쓸 때는 프로그램을 내려받느라 첫 대답에서 도구가 안 보일 수 있습니다. 한 번 더 말해 보세요.',
       ]],
       ['tips', '더 쉽게: 내 AI의 MCP 그대로 쓰기', [
         'Claude 나 Copilot 에 이미 MCP(연결된 앱)를 붙여 두었다면, 따로 고를 필요가 없습니다.',
-        '대화방 정보의 「내 AI의 MCP 그대로 쓰기」 스위치만 켜고, 명령을 다시 복사해 AI를 부르세요.',
+        '대화방 정보의 [내 AI의 MCP 그대로 쓰기] 스위치만 켜고, 명령을 다시 복사해 AI를 부르세요.',
         '내 계정에 연결된 서비스(드라이브·문서 등)를 방의 AI가 쓰게 되니, 믿는 사람만 있는 방에서 켜세요.',
       ]],
       ['safe', '직접 추가와 주의할 점', [
-        ['목록에 없는 MCP 는 「직접 추가」에서 이름과 실행 명령(예: ', code('npx -y 패키지이름'), ')을 적어 등록합니다.'],
+        ['목록에 없는 MCP 는 [직접 추가]에서 이름과 실행 명령(예: ', code('npx -y 패키지이름'), ')을 적어 등록합니다.'],
         'MCP 서버는 다른 곳에서 만든 프로그램입니다. 믿을 수 있는 것만 연결하세요.',
         '대화방에서는 방에 있는 누구의 말로도 AI가 그 도구를 씁니다. 파일·명령·결제·메일 같은 도구는 믿는 사람만 있는 방에서 쓰세요.',
       ]],
     ]],
     pc: ['내 컴퓨터', [
       ['cmd', '휴대폰에서 누르기만 하면 되게', [
-        '컴퓨터에 「연결 프로그램」을 켜 두면, 휴대폰에서 명령을 붙여 넣지 않고 버튼만 눌러 AI를 부를 수 있습니다.',
+        '컴퓨터에 [연결 프로그램]을 켜 두면, 휴대폰에서 명령을 붙여 넣지 않고 버튼만 눌러 AI를 부를 수 있습니다.',
         '새 AI를 초대하거나 MCP 를 바꾼 뒤에도 같은 버튼으로 됩니다.',
         '컴퓨터가 켜져 있고 연결 프로그램 창이 열려 있을 때만 동작합니다.',
       ]],
       ['invite', '연결하는 법', [
-        '설정(왼쪽 아래 내 계정) → 「내 컴퓨터 연결」에 나오는 명령을 컴퓨터의 CMD 창에서 실행합니다.',
-        '경고를 두 번 확인하면 「컴퓨터 키」가 나옵니다.',
+        '설정(왼쪽 아래 내 계정) → [내 컴퓨터 연결]에 나오는 명령을 컴퓨터의 CMD 창에서 실행합니다.',
+        '경고를 두 번 확인하면 [컴퓨터 키]가 나옵니다.',
         '그 키를 설정의 칸에 붙여 넣고, 경고를 두 번 확인하면 연결됩니다. 휴대폰 등 기기마다 한 번씩 합니다.',
         ['그 뒤로는 AI 초대 명령 아래의 ', h('strong', null, '컴퓨터에서 바로 실행'), ' 을 누르면 됩니다.'],
       ]],
+      ['result', '코드를 저장하고 실행하기', [
+        '채팅의 코드 위에 있는 [저장·실행]을 누르면 파일 이름을 정하고 저장할 수 있습니다.',
+        '[이 기기에 내려받기]는 지금 쓰는 휴대폰이나 컴퓨터에 받습니다. 컴퓨터 연결이 없어도 됩니다.',
+        '[내 컴퓨터에 저장]은 컴퓨터의 문서 폴더 안 "AI Talk 저장"에 넣습니다.',
+        '[내 컴퓨터에 저장하고 실행]은 저장한 뒤 바로 실행해서 결과를 보여 줍니다. .py, .js, .bat 은 실행하고 .html 은 컴퓨터에서 엽니다.',
+      ]],
+      ['cmd', '휴대폰에서 명령 직접 치기', [
+        '설정의 [명령 직접 실행]을 누르면 검은 창이 열립니다. 명령을 적으면 내 컴퓨터에서 실행되고 결과가 돌아옵니다.',
+        ['명령 실행과 코드 실행은 컴퓨터에서 연결 프로그램을 ', code('--commands'), ' 를 붙여 켰을 때만 됩니다.'],
+        '방마다 쓸지 말지 고를 수 있습니다. 대화방 정보의 [이 방에서 컴퓨터 연결 쓰기]를 켠 방에서만 실행 버튼이 나옵니다.',
+        '"4. 컴퓨터 연결 (절전 방지).bat"으로 켜면 창이 열려 있는 동안 컴퓨터가 자동으로 잠들지 않습니다.',
+      ]],
       ['safe', '위험한 기능이에요', [
         '컴퓨터 키를 가진 기기는 내 컴퓨터에 AI를 켤 수 있습니다. 코딩방의 명령 실행 옵션도 그대로 실행됩니다.',
+        '실행하는 코드는 AI나 다른 참가자가 쓴 것입니다. 무엇을 하는 코드인지 읽어 보고 실행하세요.',
         '키는 그 기기에만 저장됩니다. 공용 기기나 남과 같이 쓰는 브라우저에는 넣지 마세요.',
         '처음 쓰는 AI 계정은 비밀번호를 컴퓨터 화면에서 묻습니다. 컴퓨터에서 한 번 켜서 로그인해 두세요.',
         '쓰지 않을 때는 연결 프로그램 창을 닫아 두세요. 키가 새었다면 컴퓨터의 data/agent/pc-key.txt 를 지우고 다시 켜면 새 키가 나옵니다.',
@@ -2718,14 +2731,14 @@ function manual() {
     ]],
     friends: ['친구', [
       ['addfriend', '친구를 추가해요', [
-        '왼쪽 아래 「친구」 칸에 상대의 아이디를 치고 Enter 를 누르면 바로 친구가 됩니다.',
+        '왼쪽 아래 [친구] 칸에 상대의 아이디를 치고 Enter 를 누르면 바로 친구가 됩니다.',
         ['내 아이디는 왼쪽 맨 아래 내 이름 밑의 ', code('@아이디'), ' 입니다.'],
         'AI도 친구로 추가할 수 있습니다. (AI 계정 아이디: claude, copilot …)',
         '대화방의 참가자 목록에서 사람+ 버튼으로도 추가할 수 있습니다.',
       ]],
       ['invitefriend', '친구를 방에 초대해요', [
         '대화방 위쪽의 사람+ 버튼을 누르면 친구를 그 방에 바로 초대할 수 있습니다. 초대코드가 필요 없습니다.',
-        '방을 만들 때 「함께 초대할 친구」에서 미리 골라도 됩니다.',
+        '방을 만들 때 [함께 초대할 친구]에서 미리 골라도 됩니다.',
         '친구 목록의 + 버튼은 그 친구를 초대할 방을 고르고, 말풍선 버튼은 1:1 대화를 엽니다.',
         'AI 친구는 그 AI의 CMD 창이 켜져 있어야 대답합니다.',
       ]],
