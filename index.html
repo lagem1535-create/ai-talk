@@ -293,6 +293,7 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .mcp-item .need { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--accent); }
 .tag.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
 .tag.key { background: var(--accent-soft); color: var(--accent); }
+.pc-log { height: min(50vh, 420px); margin: 0; padding: 12px; overflow: auto; border-radius: 10px; background: var(--term); color: var(--term-ink); font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .pick { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; font-weight: 600; }
 .pick.on { border-color: var(--ink); background: var(--panel-2); }
@@ -1393,6 +1394,75 @@ async function runOnPc(cmd) {
   });
   const timer = setTimeout(() => { stop(); set(req, null).catch(() => {}); toast('컴퓨터가 응답하지 않아요.', 'err'); }, 20000);
 }
+// 컴퓨터 키로 글을 암호화·복호화한다 (pc_helper.py 의 crypt 와 같은 방식). 데이터베이스에는 암호문만 올라간다.
+async function pcCrypt(nonce, label, bytes) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(pcKey()), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const out = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i += 32) {
+    const block = new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(`${label}\n${nonce}\n${i / 32}`)));
+    for (let j = 0; j < 32 && i + j < bytes.length; j++) out[i + j] = bytes[i + j] ^ block[j];
+  }
+  return out;
+}
+const toHex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+const fromHex = (hex) => new Uint8Array((hex.match(/../g) || []).map((x) => parseInt(x, 16)));
+// 휴대폰에서 적은 명령 한 줄을 내 컴퓨터에서 실행하고 출력을 받아 온다
+async function sendPcCommand(command) {
+  const enc = new TextEncoder();
+  const nonce = randomId(16);
+  const t = Math.round(now());
+  const data = toHex(await pcCrypt(nonce, 'c', enc.encode(command)));
+  const key = await crypto.subtle.importKey('raw', enc.encode(pcKey()), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = toHex(new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(`${S.uid}\n${nonce}\n${t}\ncmd\n${data}`))));
+  const req = push(R('pc', S.uid, 'requests'));
+  await set(req, { kind: 'cmd', nonce, t, sig, data });
+  return new Promise((resolve) => {
+    const finish = (value) => { stop(); clearTimeout(timer); set(req, null).catch(() => {}); resolve(value); };
+    const stop = onValue(req, async (snap) => {
+      const r = snap.val() || {};
+      if (!r.state) return;
+      if (r.state !== 'done') return finish({ error: r.state === 'disabled' ? '컴퓨터에서 명령 실행을 허용하지 않았어요. 연결 프로그램을 끄고, 명령 끝에 --commands 를 붙여 다시 켜 주세요.' : '컴퓨터가 요청을 받지 않았어요. 컴퓨터 키를 확인해 주세요.' });
+      finish({ code: r.code, out: new TextDecoder().decode(await pcCrypt(nonce, 'o', fromHex(String(r.out || '')))) });
+    });
+    const timer = setTimeout(() => finish({ error: '컴퓨터가 응답하지 않아요. (명령이 2분 넘게 걸리거나 컴퓨터가 꺼져 있어요)' }), 130000);
+  });
+}
+async function openPcTerminal() {
+  if (!pcOnline()) return toast('컴퓨터가 꺼져 있거나 연결 프로그램이 실행 중이 아니에요.', 'err');
+  if (!store.get('pcCmdOk')) {   // 위험한 기능이라 두 번 확인받는다
+    if (!(await trustBox('휴대폰에서 명령을 직접 실행할까요?', '매우 위험: 여기 적은 명령이 내 컴퓨터에서 그대로 실행됩니다.', [
+      '파일 삭제, 프로그램 설치·실행, 컴퓨터 끄기 등 무엇이든 실행됩니다. 되돌릴 수 없습니다.',
+      'AI를 거치지 않고 바로 실행되므로, 잘못 적은 명령도 그대로 실행됩니다.',
+      '컴퓨터에서 연결 프로그램을 --commands 를 붙여 켰을 때만 동작합니다.',
+    ], '동의하고 계속'))) return;
+    if (!(await trustBox('한 번 더 확인합니다', '정말 쓸까요? 이 기기를 가진 사람은 누구나 내 컴퓨터를 마음대로 다룰 수 있게 됩니다.', [
+      '이 기기에 화면 잠금을 걸어 두세요. 공용 기기에서는 쓰지 마세요.',
+      '명령과 출력은 컴퓨터 키로 암호화해서 주고받지만, 다 쓴 뒤에는 컴퓨터의 연결 프로그램 창을 닫는 것이 가장 안전합니다.',
+    ], '위험을 알고 사용'))) return;
+    store.set('pcCmdOk', '1');
+  }
+  const log = h('pre', { class: 'pc-log' }, `${S.pc.name || '내 컴퓨터'} 에 연결됨. 명령을 적고 Enter 를 누르세요. (예: dir, python --version)\n`);
+  const input = h('input', { type: 'text', maxlength: 2000, placeholder: '명령 입력', spellcheck: 'false', autocomplete: 'off', autocapitalize: 'off' });
+  const print = (text) => { log.append(text); log.scrollTop = log.scrollHeight; };
+  let busy = false;
+  openModal('내 컴퓨터에서 명령 실행', h('div', null, log,
+    h('form', { class: 'name-row', style: 'margin-top:10px', onsubmit: async (e) => {
+      e.preventDefault();
+      const command = input.value.trim();
+      if (!command || busy) return;
+      busy = true;
+      input.value = '';
+      print(`\n> ${command}\n`);
+      try {
+        const r = await sendPcCommand(command);
+        print(r.error ? `(${r.error})\n` : `${r.out}${r.out.endsWith('\n') || !r.out ? '' : '\n'}(종료 코드 ${r.code})\n`);
+      } catch (err) { print('(보내지 못했어요)\n'); }
+      busy = false;
+      input.focus();
+    } }, input, h('button', { type: 'submit', class: 'btn primary' }, '실행')),
+    h('p', { class: 'hint' }, '명령 하나는 최대 2분, 출력은 마지막 6000자까지 보여 줍니다. 계속 켜져 있는 프로그램(서버 등)은 여기서 실행하지 마세요.')), input, true);
+}
 async function connectPc(value) {   // 위험한 기능이라 두 번 확인받는다
   const key = value.trim();
   if (key.length < 20) return toast('컴퓨터 키를 정확히 붙여 넣어 주세요.', 'err');
@@ -1751,7 +1821,10 @@ function openSettings() {
       h('p', { class: 'hint', style: 'margin:0 0 8px' }, pcKey()
         ? (pcOnline() ? `연결됨 · ${S.pc.name || '내 컴퓨터'} 가 켜져 있어요. AI 초대 명령 아래의 「컴퓨터에서 바로 실행」을 누르면 됩니다.` : '연결됨 · 지금은 컴퓨터가 꺼져 있거나 연결 프로그램이 실행 중이 아니에요.')
         : '컴퓨터에 연결 프로그램을 켜 두면, 휴대폰에서 명령을 붙여 넣지 않고 버튼만 눌러 AI를 부를 수 있어요.'),
-      pcKey() ? h('button', { type: 'button', class: 'btn danger', onclick: () => { store.set('pcKey', null); toast('이 기기의 연결을 끊었어요.'); openSettings(); } }, icon('x'), '이 기기의 연결 끊기')
+      pcKey() ? h('div', { class: 'stack' },
+        h('button', { type: 'button', class: 'btn', onclick: openPcTerminal }, icon('code'), '명령 직접 실행' + (S.pc && S.pc.commands ? '' : ' (컴퓨터에서 --commands 로 켜야 함)')),
+        h('p', { class: 'hint', style: 'margin:0' }, '컴퓨터 연결은 방마다 따로 켭니다. 대화방 정보의 「이 방에서 컴퓨터 연결 쓰기」 스위치를 켜세요.'),
+        h('button', { type: 'button', class: 'btn danger', onclick: () => { store.set('pcKey', null); toast('이 기기의 연결을 끊었어요.'); openSettings(); } }, icon('x'), '이 기기의 연결 끊기'))
         : (() => {
           const key = h('input', { type: 'password', maxlength: 80, placeholder: '컴퓨터 키 붙여 넣기', autocomplete: 'off' });
           // 배포된 사이트에서는 필요한 파일 두 개를 이 사이트에서 받아 와서 바로 실행한다 (어느 폴더에서 붙여 넣어도 됨)
@@ -1996,7 +2069,11 @@ function renderInfo(room, force) {
           h('div', { class: 'term-line' }, h('span', { class: 'prompt' }, '$'), cmd.split(' ').map((word) => h('span', null, word))),
           h('button', { type: 'button', class: 'icon-btn', title: '명령 복사', 'aria-label': '명령 복사', onclick: () => copyText(cmd, '명령을 복사했어요') }, icon('copy')))
           : h('p', { class: 'hint' }, '「폴더 선택」으로 내 컴퓨터의 폴더를 고르거나, 「GitHub 연결」로 저장소를 고르면 명령이 나옵니다.'),
-        ready && pcKey() ? h('button', { type: 'button', class: 'btn block', style: 'margin-top:8px', disabled: !pcOnline(), onclick: () => runOnPc(cmd) },
+        pcKey() ? h('div', { class: 'row' }, h('div', null, h('strong', null, '이 방에서 컴퓨터 연결 쓰기'),
+          h('small', null, '켜면 이 방의 명령을 버튼 하나로 내 컴퓨터에서 실행할 수 있어요.')),
+          h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(store.get('pcRoom.' + room.id) === '1'), 'aria-label': '이 방에서 컴퓨터 연결 쓰기',
+            onclick: () => { store.set('pcRoom.' + room.id, store.get('pcRoom.' + room.id) === '1' ? '0' : '1'); renderInfo(current(), true); } })) : null,
+        ready && pcKey() && store.get('pcRoom.' + room.id) === '1' ? h('button', { type: 'button', class: 'btn block', style: 'margin-top:8px', disabled: !pcOnline(), onclick: () => runOnPc(cmd) },
           icon('play'), pcOnline() ? `컴퓨터에서 바로 실행 (${S.pc.name || '내 컴퓨터'})` : '컴퓨터가 꺼져 있어요') : null,
         ready && !pcKey() ? h('p', { class: 'hint' }, '휴대폰에서도 누르기만 하면 되게 하려면: 설정 → 「내 컴퓨터 연결」') : null,
         ready && APP_DIR.startsWith('__') ? h('p', { class: 'hint' }, '명령이 긴 이유: AI 참가 프로그램(ai_agent.py)을 이 사이트에서 받아서 바로 실행하기 때문입니다. 명령을 실행한 폴더에 ai_agent.py 와 data 폴더가 생깁니다.') : null,

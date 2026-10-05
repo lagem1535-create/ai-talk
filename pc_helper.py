@@ -72,6 +72,50 @@ def load_key():
     return key
 
 
+def crypt(key, nonce, label, data):
+    """컴퓨터 키로 글을 암호화·복호화한다 (같은 함수로 양쪽 다). 데이터베이스에는 암호문만 올라간다.
+    HMAC-SHA256 으로 만든 열쇠 흐름과 XOR 하는 방식이며, label 로 명령('c')과 출력('o')의 열쇠 흐름을 나눈다."""
+    out = bytearray()
+    for i in range(0, len(data), 32):
+        block = hmac.new(key.encode("utf-8"), f"{label}\n{nonce}\n{i // 32}".encode("utf-8"), hashlib.sha256).digest()
+        out += bytes(a ^ b for a, b in zip(data[i:i + 32], block))
+    return bytes(out)
+
+
+def run_command(fb, owner, key, req, seen, allowed):
+    """휴대폰에서 보낸 명령 한 줄을 이 컴퓨터에서 실행하고 출력을 돌려준다. 반환: 요청에 적을 값들."""
+    nonce, t, sig, data = req.get("nonce"), req.get("t"), req.get("sig"), req.get("data")
+    if not (isinstance(nonce, str) and isinstance(t, int) and isinstance(sig, str) and isinstance(data, str)):
+        return {"state": "rejected"}
+    want = hmac.new(key.encode("utf-8"), f"{owner}\n{nonce}\n{t}\ncmd\n{data}".encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(want, sig) or nonce in seen or abs(fb.now() - t) > MAX_AGE_MS:
+        A.log("서명이 맞지 않거나 오래된 명령 요청을 받아 무시했습니다.")
+        return {"state": "rejected"}
+    seen.add(nonce)
+    if not allowed:
+        A.log("명령 실행 요청을 받았지만, --commands 없이 켜서 거절했습니다.")
+        return {"state": "disabled"}
+    try:
+        command = crypt(key, nonce, "c", bytes.fromhex(data)).decode("utf-8")
+    except ValueError:
+        return {"state": "rejected"}
+    A.log(f"명령 실행: {command[:120]}")
+    try:
+        p = subprocess.run(command, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           cwd=os.path.expanduser("~"), timeout=120)
+        code, raw = p.returncode, p.stdout
+    except subprocess.TimeoutExpired as e:
+        code, raw = -1, (e.stdout or b"") + "\n(120초가 지나 중단했습니다)".encode("utf-8")
+    for enc in ("utf-8", "cp949"):   # 윈도우 명령의 출력은 cp949 인 경우가 많다
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="replace")
+    text = text[-6000:]
+    return {"state": "done", "code": code, "out": crypt(key, nonce, "o", text.encode("utf-8")).hex()}
+
+
 def clean_args(args):
     """요청으로 온 옵션 중 ai_agent.py 에 넘겨도 되는 것만 남긴다. 이상하면 None."""
     out, i = [], 0
@@ -99,6 +143,8 @@ def main():
     ap.add_argument("--id", default="mypc", help="이 컴퓨터가 로그인할 계정 아이디 (기본 mypc)")
     ap.add_argument("--pw", help="그 계정의 비밀번호 (생략하면 물어봄. 한 번 로그인하면 다시 묻지 않음)")
     ap.add_argument("--site", help="배포된 AI Talk 주소. firebase-config.json 이 없을 때 여기서 설정을 받아 온다")
+    ap.add_argument("--commands", action="store_true",
+                    help="휴대폰에서 보낸 명령을 이 컴퓨터에서 그대로 실행하는 것을 허용 (매우 위험)")
     args = ap.parse_args()
 
     if args.site:
@@ -113,6 +159,18 @@ def main():
         A.die("Firebase 설정이 없습니다. firebase-config.json 을 두거나 --site 주소 를 붙여 주세요.")
 
     key = load_key()
+    if args.commands:   # 켤 때마다 두 번 확인받는다
+        print()
+        print("=" * 62)
+        print("  매우 위험: 휴대폰에서 보낸 명령을 이 컴퓨터에서 그대로 실행합니다.")
+        print("=" * 62)
+        print("  - 파일 삭제, 프로그램 설치·실행, 컴퓨터 끄기 등 무엇이든 실행됩니다. 되돌릴 수 없습니다.")
+        print("  - 컴퓨터 키를 가진 사람이면 누구나 이 컴퓨터를 마음대로 다룰 수 있습니다.")
+        if not confirm("\n명령 실행을 허용할까요?"):
+            A.die("취소했습니다. (--commands 를 빼고 다시 실행하면 AI 켜기만 됩니다)")
+        print("\n  한 번 더 확인합니다. 이 창이 켜져 있는 동안 계속 허용됩니다. 다 쓰면 꼭 창을 닫으세요.")
+        if not confirm("정말 허용할까요?"):
+            A.die("취소했습니다.")
     fb = A.Firebase()
     interactive = bool(sys.stdin and sys.stdin.isatty())
 
@@ -149,12 +207,15 @@ def main():
             try:
                 if time.time() - beat > 15:   # 앱에 '컴퓨터 켜짐'으로 보이게 한다
                     beat = time.time()
-                    fb.db("PUT", f"{base}/status", {"name": name, "seen": A.SV})
+                    fb.db("PUT", f"{base}/status", {"name": name, "seen": A.SV, "commands": bool(args.commands)})
                 for rid, req in (fb.get(f"{base}/requests") or {}).items():
                     if not isinstance(req, dict) or req.get("state"):
                         continue
-                    state = handle(fb, owner, key, rid, req, seen, args.site)
-                    fb.db("PATCH", f"{base}/requests/{rid}", {"state": state, "done": A.SV})
+                    if req.get("kind") == "cmd":
+                        result = run_command(fb, owner, key, req, seen, args.commands)
+                    else:
+                        result = {"state": handle(fb, owner, key, rid, req, seen, args.site)}
+                    fb.db("PATCH", f"{base}/requests/{rid}", {**result, "done": A.SV})
                 delay = 1
                 time.sleep(2)
             except (A.ApiError, A.NetError) as e:
