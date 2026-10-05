@@ -139,13 +139,32 @@ def main():
         except Exception:
             pass
     ap = argparse.ArgumentParser(description="AI Talk - 휴대폰에서 이 컴퓨터에 AI를 켤 수 있게 해 주는 프로그램")
-    ap.add_argument("--owner", required=True, help="내 AI Talk 아이디 (왼쪽 아래 @아이디). 이 사람의 요청만 받는다")
+    ap.add_argument("--owner", help="내 AI Talk 아이디 (왼쪽 아래 @아이디). 이 사람의 요청만 받는다. 한 번 적으면 기억한다")
+    ap.add_argument("--awake", action="store_true", help="켜져 있는 동안 컴퓨터가 자동으로 절전 모드에 들어가지 않게 함")
     ap.add_argument("--id", default="mypc", help="이 컴퓨터가 로그인할 계정 아이디 (기본 mypc)")
     ap.add_argument("--pw", help="그 계정의 비밀번호 (생략하면 물어봄. 한 번 로그인하면 다시 묻지 않음)")
     ap.add_argument("--site", help="배포된 AI Talk 주소. firebase-config.json 이 없을 때 여기서 설정을 받아 온다")
     ap.add_argument("--commands", action="store_true",
                     help="휴대폰에서 보낸 명령을 이 컴퓨터에서 그대로 실행하는 것을 허용 (매우 위험)")
     args = ap.parse_args()
+
+    owner_path = os.path.join(A.BASE_DIR, "data", "agent", "pc-owner.txt")   # 한 번 적은 아이디는 기억해 둔다
+    if not args.owner:
+        try:
+            with open(owner_path, encoding="utf-8") as f:
+                args.owner = f.read().strip()
+        except OSError:
+            pass
+    if not args.owner:
+        args.owner = A.ask("내 AI Talk 아이디 (화면 왼쪽 아래 @ 뒤의 글자)").lstrip("@")
+    if not args.owner:
+        A.die("아이디가 필요합니다.  예: python pc_helper.py --owner 내아이디")
+    os.makedirs(os.path.dirname(owner_path), exist_ok=True)
+    with open(owner_path, "w", encoding="utf-8") as f:
+        f.write(args.owner)
+    if args.awake:
+        print("절전 방지: 이 창이 켜져 있는 동안 컴퓨터가 자동으로 잠들지 않습니다." if A.keep_awake()
+              else "절전 방지를 켜지 못했습니다. (윈도우에서만 됩니다)")
 
     if args.site:
         site = args.site.rstrip("/")

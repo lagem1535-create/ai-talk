@@ -1511,6 +1511,20 @@ def own_mcp(cli):
     return [n for n in names if n]
 
 
+def keep_awake():
+    """이 프로그램이 켜져 있는 동안 컴퓨터가 자동으로 절전 모드에 들어가지 않게 한다.
+    윈도우 설정을 바꾸는 것이 아니라 '지금 일하는 중'이라고 알리는 것이라서, 창을 닫으면 원래대로 돌아간다.
+    (화면은 꺼질 수 있고, 노트북 덮개를 닫거나 전원 버튼으로 재우는 것은 막지 못한다)"""
+    if not IS_WINDOWS:
+        return False
+    try:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        return bool(ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED))
+    except Exception:
+        return False
+
+
 def self_update(site):
     """배포된 사이트에 더 새로운 ai_agent.py 가 있으면 받아서 그것으로 다시 실행한다.
     (예전에 받아 둔 파일을 그대로 실행해서 새 기능이 안 되는 일을 막는다)"""
@@ -1597,12 +1611,15 @@ def main():
     ap.add_argument("--site", help="배포된 AI Talk 주소 (예: https://ai-talk.이름.workers.dev). "
                                    "firebase-config.json 없이 그 주소에서 Firebase 설정을 받아 온다")
     ap.add_argument("--data", default=os.path.join(BASE_DIR, "data", "agent"), help="로그인 정보 등을 둘 폴더")
+    ap.add_argument("--awake", action="store_true", help="켜져 있는 동안 컴퓨터가 자동으로 절전 모드에 들어가지 않게 함")
     ap.add_argument("--check", action="store_true", help="CLI를 한 번 불러 보고 끝냄 (로그인 없이 시험)")
     args = ap.parse_args()
     args.history = max(1, min(args.history, 100))
 
     if args.site:
         self_update(args.site)
+    if args.awake and keep_awake():
+        print("절전 방지: 이 창이 켜져 있는 동안 컴퓨터가 자동으로 잠들지 않습니다.")
     interactive = bool(sys.stdin and sys.stdin.isatty())
     wizard = not args.cli
     if wizard:
