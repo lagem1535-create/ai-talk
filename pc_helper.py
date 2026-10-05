@@ -116,6 +116,63 @@ def run_command(fb, owner, key, req, seen, allowed):
     return {"state": "done", "code": code, "out": crypt(key, nonce, "o", text.encode("utf-8")).hex()}
 
 
+SAVE_DIR = os.path.join(os.path.expanduser("~"), "Documents", "AI Talk 저장")   # 휴대폰에서 보낸 파일을 두는 곳
+RUNNERS = {".py": [sys.executable], ".js": ["node"], ".mjs": ["node"], ".bat": ["cmd", "/c"], ".cmd": ["cmd", "/c"],
+           ".ps1": ["powershell", "-ExecutionPolicy", "Bypass", "-File"]}
+
+
+def save_file(fb, owner, key, req, seen, allowed):
+    """휴대폰에서 보낸 코드를 파일로 저장하고, 요청하면 실행한다. 반환: 요청에 적을 값들."""
+    nonce, t, sig, data = req.get("nonce"), req.get("t"), req.get("sig"), req.get("data")
+    if not (isinstance(nonce, str) and isinstance(t, int) and isinstance(sig, str) and isinstance(data, str)):
+        return {"state": "rejected"}
+    want = hmac.new(key.encode("utf-8"), f"{owner}\n{nonce}\n{t}\nfile\n{data}".encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(want, sig) or nonce in seen or abs(fb.now() - t) > MAX_AGE_MS:
+        A.log("서명이 맞지 않거나 오래된 저장 요청을 받아 무시했습니다.")
+        return {"state": "rejected"}
+    seen.add(nonce)
+    try:
+        import json
+        item = json.loads(crypt(key, nonce, "c", bytes.fromhex(data)).decode("utf-8"))
+        name, content, run = str(item["name"]), str(item["content"]), bool(item.get("run"))
+    except (ValueError, KeyError, TypeError):
+        return {"state": "rejected"}
+    # 파일 이름만 쓴다 (폴더 경로를 넣어 다른 곳에 쓰는 것을 막음)
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", os.path.basename(name.replace("\\", "/"))).strip(" .")[:80] or "file.txt"
+    if run and not allowed:
+        A.log("파일 실행 요청을 받았지만, --commands 없이 켜서 거절했습니다.")
+        return {"state": "disabled"}
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    path = os.path.join(SAVE_DIR, name)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+    A.log(f"파일 저장: {path}" + (" (실행)" if run else ""))
+    text, code = f"저장했습니다: {path}", 0
+    if run:
+        ext = os.path.splitext(name)[1].lower()
+        if ext in (".html", ".htm", ".svg", ".txt", ".md", ".json", ".css"):
+            os.startfile(path) if A.IS_WINDOWS else None   # 브라우저나 기본 프로그램으로 연다
+            text += "\n컴퓨터에서 이 파일을 열었습니다."
+        elif ext in RUNNERS:
+            try:
+                p = subprocess.run([*RUNNERS[ext], path], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, cwd=SAVE_DIR, timeout=120,
+                                   env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+                code, raw = p.returncode, p.stdout
+            except subprocess.TimeoutExpired as e:
+                code, raw = -1, (e.stdout or b"") + "\n(120초가 지나 중단했습니다)".encode("utf-8")
+            except OSError as e:
+                code, raw = -1, f"실행하지 못했습니다: {e}".encode("utf-8")
+            try:
+                out = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                out = raw.decode("cp949", errors="replace")
+            text += "\n\n[실행 결과]\n" + out[-5500:]
+        else:
+            text += f"\n{ext or '이 종류의'} 파일은 실행 방법을 몰라서 저장만 했습니다."
+    return {"state": "done", "code": code, "out": crypt(key, nonce, "o", text.encode("utf-8")).hex()}
+
+
 def clean_args(args):
     """요청으로 온 옵션 중 ai_agent.py 에 넘겨도 되는 것만 남긴다. 이상하면 None."""
     out, i = [], 0
@@ -232,6 +289,8 @@ def main():
                         continue
                     if req.get("kind") == "cmd":
                         result = run_command(fb, owner, key, req, seen, args.commands)
+                    elif req.get("kind") == "file":
+                        result = save_file(fb, owner, key, req, seen, args.commands)
                     else:
                         result = {"state": handle(fb, owner, key, rid, req, seen, args.site)}
                     fb.db("PATCH", f"{base}/requests/{rid}", {**result, "done": A.SV})

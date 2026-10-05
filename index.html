@@ -1408,21 +1408,21 @@ async function pcCrypt(nonce, label, bytes) {
 const toHex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 const fromHex = (hex) => new Uint8Array((hex.match(/../g) || []).map((x) => parseInt(x, 16)));
 // 휴대폰에서 적은 명령 한 줄을 내 컴퓨터에서 실행하고 출력을 받아 온다
-async function sendPcCommand(command) {
+async function sendPcCommand(command, kind = 'cmd') {   // kind: cmd(명령 한 줄) / file(저장할 파일 정보)
   const enc = new TextEncoder();
   const nonce = randomId(16);
   const t = Math.round(now());
   const data = toHex(await pcCrypt(nonce, 'c', enc.encode(command)));
   const key = await crypto.subtle.importKey('raw', enc.encode(pcKey()), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = toHex(new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(`${S.uid}\n${nonce}\n${t}\ncmd\n${data}`))));
+  const sig = toHex(new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(`${S.uid}\n${nonce}\n${t}\n${kind}\n${data}`))));
   const req = push(R('pc', S.uid, 'requests'));
-  await set(req, { kind: 'cmd', nonce, t, sig, data });
+  await set(req, { kind, nonce, t, sig, data });
   return new Promise((resolve) => {
     const finish = (value) => { stop(); clearTimeout(timer); set(req, null).catch(() => {}); resolve(value); };
     const stop = onValue(req, async (snap) => {
       const r = snap.val() || {};
       if (!r.state) return;
-      if (r.state !== 'done') return finish({ error: r.state === 'disabled' ? '컴퓨터에서 명령 실행을 허용하지 않았어요. 연결 프로그램을 끄고, 명령 끝에 --commands 를 붙여 다시 켜 주세요.' : '컴퓨터가 요청을 받지 않았어요. 컴퓨터 키를 확인해 주세요.' });
+      if (r.state !== 'done') return finish({ error: r.state === 'disabled' ? '컴퓨터에서 실행을 허용하지 않았어요. 연결 프로그램을 끄고, 명령 끝에 --commands 를 붙여 다시 켜 주세요.' : '컴퓨터가 요청을 받지 않았어요. 컴퓨터 키를 확인해 주세요.' });
       finish({ code: r.code, out: new TextDecoder().decode(await pcCrypt(nonce, 'o', fromHex(String(r.out || '')))) });
     });
     const timer = setTimeout(() => finish({ error: '컴퓨터가 응답하지 않아요. (명령이 2분 넘게 걸리거나 컴퓨터가 꺼져 있어요)' }), 130000);
@@ -2231,8 +2231,48 @@ function codeBlock(lang, code) {   // 코드 블록 + 복사 버튼, HTML 이면
     h('div', { class: 'code-bar' },
       h('span', null, lang || (isHtml ? 'html' : '코드')),
       isHtml ? h('button', { type: 'button', onclick: () => previewHtml(code) }, '미리보기') : null,
+      h('button', { type: 'button', onclick: () => openSave(lang, code) }, '저장·실행'),
       h('button', { type: 'button', onclick: () => copyText(code, '코드를 복사했어요') }, '복사')),
     h('pre', null, h('code', null, code)));
+}
+// 채팅의 코드를 파일로 저장한다: 이 기기에 내려받기, 또는 연결된 내 컴퓨터에 바로 저장(하고 실행)
+const FILE_NAMES = { html: 'page.html', htm: 'page.html', svg: 'image.svg', python: 'script.py', py: 'script.py', javascript: 'script.js', js: 'script.js',
+  json: 'data.json', css: 'style.css', bat: 'run.bat', cmd: 'run.bat', powershell: 'script.ps1', ps1: 'script.ps1', markdown: 'note.md', md: 'note.md' };
+function openSave(lang, code) {
+  const guess = FILE_NAMES[String(lang).toLowerCase()] || (/^\s*(<!doctype html|<html[\s>])/i.test(code) ? 'page.html' : 'file.txt');
+  const name = h('input', { type: 'text', maxlength: 80, value: guess, required: true, spellcheck: 'false' });
+  const out = h('pre', { class: 'pc-log', style: 'height:auto;max-height:36vh;margin-top:10px', hidden: true });
+  const fileName = () => name.value.trim().replace(/[<>:"/\\|?*]/g, '_') || guess;
+  const download = () => {
+    const link = h('a', { href: URL.createObjectURL(new Blob([code], { type: 'text/plain;charset=utf-8' })), download: fileName() });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+    toast('이 기기에 내려받았어요.');
+  };
+  const toPc = async (run) => {
+    if (!pcOnline()) return toast('컴퓨터가 꺼져 있거나 연결 프로그램이 실행 중이 아니에요.', 'err');
+    if (run && !(await trustBox('내 컴퓨터에서 실행할까요?', '위험: 이 코드가 내 컴퓨터에서 그대로 실행됩니다.', [
+      'AI나 다른 참가자가 쓴 코드입니다. 무엇을 하는 코드인지 읽어 보고 실행하세요.',
+      '파일을 지우거나 프로그램을 설치하는 코드도 그대로 실행됩니다. 되돌릴 수 없습니다.',
+    ], '읽어 봤고, 실행'))) return openSave(lang, code);
+    out.hidden = false;
+    out.textContent = '컴퓨터에 보내는 중…';
+    try {
+      const r = await sendPcCommand(JSON.stringify({ name: fileName(), content: code, run }), 'file');
+      out.textContent = r.error ? `(${r.error})` : r.out;
+    } catch (err) { out.textContent = '(보내지 못했어요)'; }
+  };
+  openModal('코드 저장·실행', h('div', null,
+    h('label', { class: 'field' }, h('span', null, '파일 이름'), name),
+    h('div', { class: 'stack' },
+      h('button', { type: 'button', class: 'btn', onclick: download }, icon('down'), '이 기기에 내려받기'),
+      pcKey() ? h('button', { type: 'button', class: 'btn', onclick: () => toPc(false) }, icon('folder'), '내 컴퓨터에 저장 (문서 → AI Talk 저장)') : null,
+      pcKey() ? h('button', { type: 'button', class: 'btn danger', onclick: () => toPc(true) }, icon('play'), '내 컴퓨터에 저장하고 실행') : null),
+    pcKey() ? h('p', { class: 'hint' }, '실행은 컴퓨터의 연결 프로그램을 --commands 로 켰을 때만 됩니다. .py · .js · .bat · .ps1 은 실행하고, .html 등은 컴퓨터에서 엽니다.')
+      : h('p', { class: 'hint' }, '내 컴퓨터에 바로 저장하고 실행하려면 설정 → 「내 컴퓨터 연결」을 먼저 해 주세요.'),
+    out), name);
 }
 // 채팅에 올라온 HTML 코드를 실행해서 보여 준다. 격리된 창(sandbox)이라 내 계정·대화·저장소에 접근하지 못한다.
 function previewHtml(code) {
