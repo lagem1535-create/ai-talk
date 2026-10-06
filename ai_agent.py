@@ -713,10 +713,25 @@ def sorted_messages(data, mid):
         m = data[key] or {}
         kind = m.get("kind") if m.get("kind") in ("human", "ai") else "system"
         out.append({"id": key, "kind": kind, "name": str(m.get("name") or ""), "mine": m.get("m") == mid,
-                    "text": str(m.get("text") or ""), "ts": (m.get("ts") or 0) / 1000,
+                    "text": str(m.get("text") or "") + file_note(m.get("file")),
+                    "raw": str(m.get("text") or ""),   # 서명 확인에는 보낸 그대로의 글을 쓴다
+                    "ts": (m.get("ts") or 0) / 1000,
                     "act": str(m.get("act") or ""), "to": str(m.get("to") or ""),
                     "sig": m.get("sig"), "nonce": m.get("nonce"), "t": m.get("t")})
     return out
+
+
+def file_note(f):
+    """메시지에 붙은 사진·파일을 AI가 알 수 있게 글로 바꾼다."""
+    if not isinstance(f, dict):
+        return ""
+    name = str(f.get("name") or "파일")
+    if f.get("thumb"):
+        return f"[사진을 올림: {name}] (이 대화에서는 사진 내용을 볼 수 없습니다)"
+    note = f"[파일을 올림: {name}]"
+    if isinstance(f.get("preview"), str) and f["preview"]:
+        note += "\n--- 파일 내용 ---\n" + f["preview"][:4000] + "\n--- 끝 ---"
+    return note
 
 
 def ai_streak(msgs):
@@ -986,7 +1001,7 @@ class Agent:
         if nonce in self.nonces or abs(self.fb.now() - t) > ORDER_MAX_AGE_MS:
             return False
         want = hmac.new(self.key.encode("utf-8"),
-                        f"{rid}\n{m['act']}\n{m['to']}\n{nonce}\n{t}\n{m['text']}".encode("utf-8"),
+                        f"{rid}\n{m['act']}\n{m['to']}\n{nonce}\n{t}\n{m.get('raw', m['text'])}".encode("utf-8"),
                         hashlib.sha256).hexdigest()
         return hmac.compare_digest(want, sig)
 

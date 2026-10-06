@@ -294,6 +294,16 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .tag.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
 .tag.key { background: var(--accent-soft); color: var(--accent); }
 .pc-log { height: min(50vh, 420px); margin: 0; padding: 12px; overflow: auto; border-radius: 10px; background: var(--term); color: var(--term-ink); font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.avatar { overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attach { display: grid; place-items: center; flex: none; width: 34px; height: 38px; border: 0; background: transparent; color: var(--ink-3); font-size: 17px; }
+.attach:hover { color: var(--ink); }
+.photo-msg { display: block; max-width: min(320px, 100%); max-height: 320px; border-radius: 10px; cursor: zoom-in; }
+.file-msg { display: flex; align-items: center; gap: 10px; padding: 2px 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.file-msg .ic { font-size: 22px; }
+.file-msg small { display: block; font-size: 12px; opacity: .7; }
+.photo-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.photo-row .avatar { width: 56px; height: 56px; font-size: 20px; }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .pick { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; font-weight: 600; }
 .pick.on { border-color: var(--ink); background: var(--panel-2); }
@@ -602,6 +612,10 @@ button.me:hover { background: var(--panel-2); }
       <div id="status" class="status"></div>
       <div id="mode-bar" class="mode-bar" hidden></div>
       <form id="composer" class="composer">
+        <button type="button" class="attach" id="file-btn" title="사진·파일 올리기" aria-label="사진·파일 올리기"><span data-icon="clip"></span></button>
+        <button type="button" class="attach" id="folder-btn" title="폴더 올리기" aria-label="폴더 올리기"><span data-icon="folder"></span></button>
+        <input type="file" id="file-input" multiple hidden>
+        <input type="file" id="folder-input" webkitdirectory multiple hidden>
         <textarea id="input" rows="1" maxlength="8000" placeholder="메시지 보내기 (Enter 전송 · Shift+Enter 줄바꿈)" aria-label="메시지"></textarea>
         <button type="submit" class="send" id="send-btn" aria-label="보내기" disabled><span data-icon="send"></span></button>
       </form>
@@ -712,6 +726,8 @@ const ICONS = {
   userplus: '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/>',
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   code: '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
+  clip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
   folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
 };
@@ -757,7 +773,8 @@ function randomId(n, alphabet = ID_ALPHABET) {
 const fmtCode = (code) => `${code.slice(0, 4)}-${code.slice(4)}`;
 const cleanName = (value, max) => String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').split(/\s+/).filter(Boolean).join(' ').slice(0, max);
 
-function avatar(seed, label, kind) {
+function avatar(seed, label, kind, photo) {
+  if (isPhoto(photo)) return h('span', { class: 'avatar' + (kind === 'ai' ? ' ai' : '') }, h('img', { src: photo, alt: '' }));
   let hash = 0;
   for (const ch of String(seed)) hash = (hash * 31 + ch.codePointAt(0)) % 360;
   const anon = /^익명 (\d+)/.exec(label);
@@ -935,7 +952,7 @@ function startSession(uid, profile) {
   $('#main').hidden = false;
   $('#me-name').textContent = profile.name;
   $('#me-id').textContent = profile.username ? '@' + profile.username : '';
-  $('#me-avatar').textContent = [...profile.name][0] || '?';
+  drawMe();
   showRoomPane();
   renderRoomList();
   if (!store.get('helpSeen')) {   // 이 브라우저에서 처음 들어왔으면 사용법부터
@@ -992,7 +1009,11 @@ function stopSession() {
 }
 function heartbeat() {   // 내가 접속 중임을 방마다 알린다
   const changes = {};
-  for (const room of S.rooms) changes[`rooms/${room.id}/members/${room.me.mid}/seen`] = SV;
+  for (const room of S.rooms) {
+    changes[`rooms/${room.id}/members/${room.me.mid}/seen`] = SV;
+    const mine = room.name_mode === 'alias' ? null : (S.me.photo || null);   // 가명방에서는 사진을 보여 주지 않는다
+    if ((room.me.photo || null) !== mine) changes[`rooms/${room.id}/members/${room.me.mid}/photo`] = mine;
+  }
   if (Object.keys(changes).length) update(R(), changes).catch(() => {});
 }
 
@@ -1011,6 +1032,7 @@ function viewRoom(id) {
     .map(([k, m]) => ({
       mid: k, uid: m.uid, label: String(m.label || '?'), kind: m.kind === 'ai' ? 'ai' : 'human',
       online: k === mid || t - (m.seen || 0) < ONLINE_MS, owner: m.uid === meta.owner, me: k === mid,
+      photo: isPhoto(m.photo) ? m.photo : null,                               // 프로필 사진
       work: m.work && m.work.name ? String(m.work.name) : '',                 // 코딩방에서 맡은 프로젝트
       pending: m.pending && m.pending.key ? { key: String(m.pending.key), type: String(m.pending.type) } : null,   // 승인을 기다리는 메시지
     }));
@@ -1032,7 +1054,7 @@ function viewRoom(id) {
     last: last && { key: last.key, name: String(last.name || ''), kind: last.kind, text: String(last.text || ''), ts: Number(last.ts) || 0, n: Number(last.n) || 0 },
     sort: Number(last ? last.ts : meta.created) || 0,
     unread: Math.max(0, (last ? Number(last.n) || 0 : 0) - (Number(mine.read_n) || 0)),
-    me: { mid, label: String(mine.label || '?'), read: mine.read || '' },
+    me: { mid, label: String(mine.label || '?'), read: mine.read || '', photo: mine.photo || null },
     members,
     typing: Object.entries(raw.typing || {}).filter(([k, v]) => k !== mid && v && v.label && t - (v.at || 0) < TYPING_MS).map(([, v]) => String(v.label)),
     doing: String((Object.values(raw.typing || {}).find((v) => v && v.doing && t - (v.at || 0) < TYPING_MS) || {}).doing || ''),   // 코딩 중인 AI가 지금 하는 일
@@ -1156,7 +1178,7 @@ async function removeMember(room, member, text) {   // 나가기·내보내기
 }
 async function deleteRoom(room) {
   const raw = S.raw.get(room.id);
-  const changes = { [`rooms/${room.id}`]: null, [`messages/${room.id}`]: null };
+  const changes = { [`rooms/${room.id}`]: null, [`messages/${room.id}`]: null, [`files/${room.id}`]: null };
   if (raw.meta.code) changes[`codes/${raw.meta.code}`] = null;
   for (const m of Object.values(raw.members || {})) changes[`userRooms/${m.uid}/${room.id}`] = null;
   await update(R(), changes);
@@ -1202,6 +1224,101 @@ function openDm(room, member) {
   const a = room.me.mid, b = member.mid;
   return ensureDm(`dm_${room.id}_${[a, b].sort().join('_')}`, raw.meta.name_mode,
     { mid: a, ...raw.members[a] }, { mid: b, ...raw.members[b] }, `'${room.name}' 방에서 시작한 1:1 대화입니다.`);
+}
+
+/* ───────────── 사진·파일 ───────────── */
+const MAX_FILE = 3 * 1024 * 1024;   // 파일 하나의 최대 크기 (데이터베이스에 넣으므로 작게 잡는다)
+const MAX_FOLDER_FILES = 30;
+const isPhoto = (value) => typeof value === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,/.test(value);
+const fileSize = (n) => (n < 1024 ? `${n}B` : n < 1048576 ? `${Math.round(n / 1024)}KB` : `${(n / 1048576).toFixed(1)}MB`);
+const readAs = (file, how) => new Promise((ok, no) => {
+  const reader = new FileReader();
+  reader.onload = () => ok(reader.result);
+  reader.onerror = () => no(reader.error);
+  reader[how](file);
+});
+// 사진을 정해진 크기 안으로 줄여서 JPEG 로 만든다
+async function shrinkImage(file, max, quality) {
+  const img = await new Promise((ok, no) => {
+    const el = new Image();
+    el.onload = () => ok(el);
+    el.onerror = () => no(userError('사진을 읽지 못했어요.'));
+    el.src = URL.createObjectURL(file);
+  });
+  const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';   // 투명한 부분은 흰색으로
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  URL.revokeObjectURL(img.src);
+  return canvas.toDataURL('image/jpeg', quality);
+}
+// 프로필 사진 바꾸기: 작게 줄여서 내 계정과, 내가 들어가 있는 방들에 넣는다 (가명방은 정체가 드러나므로 제외)
+async function setPhoto(file) {
+  const photo = file ? await shrinkImage(file, 128, 0.85) : null;
+  await update(R('users', S.uid), { photo });
+  S.me.photo = photo;
+  drawMe();
+  heartbeat();
+  toast(photo ? '프로필 사진을 바꿨어요.' : '프로필 사진을 지웠어요.');
+}
+function drawMe() {
+  const el = $('#me-avatar');
+  el.replaceChildren(...(isPhoto(S.me.photo) ? [h('img', { src: S.me.photo, alt: '' })] : [[...S.me.name][0] || '?']));
+}
+// 방에 사진·파일·폴더 올리기. 사진은 줄여서 올리고, 글로 된 파일은 AI도 읽을 수 있게 앞부분을 함께 보낸다.
+async function sendFiles(list) {
+  const room = current();
+  let files = [...list];
+  if (!room || !files.length) return;
+  if (files.length > MAX_FOLDER_FILES) {
+    toast(`한 번에 ${MAX_FOLDER_FILES}개까지만 올릴 수 있어요. 앞의 ${MAX_FOLDER_FILES}개만 올립니다.`, 'err');
+    files = files.slice(0, MAX_FOLDER_FILES);
+  }
+  let sent = 0;
+  for (const file of files) {
+    const name = (file.webkitRelativePath || file.name).slice(0, 200);
+    try {
+      const image = /^image\/(png|jpeg|webp|gif|bmp)$/.test(file.type);
+      if (!image && file.size > MAX_FILE) { toast(`${name}: 3MB 가 넘어서 올리지 못했어요.`, 'err'); continue; }
+      const id = push(R('files', room.id)).key;
+      const info = { id, name, size: file.size, type: file.type || 'application/octet-stream' };
+      let data;
+      if (image) {
+        data = await shrinkImage(file, 1600, 0.85);
+        info.thumb = await shrinkImage(file, 360, 0.8);
+        info.type = 'image/jpeg';
+      } else {
+        data = await readAs(file, 'readAsDataURL');
+        if (file.size < 200000 && (/^text\/|json|xml|javascript/.test(file.type) || /\.(txt|md|py|js|ts|html|css|json|csv|java|c|cpp|cs|go|rs|sh|bat|yml|yaml|xml|sql)$/i.test(file.name))) {
+          info.preview = (await readAs(file, 'readAsText')).slice(0, 4000);   // AI가 읽을 수 있게
+        }
+      }
+      await set(R('files', room.id, id), { name, type: info.type, size: file.size, data });
+      await sendText(room, '', '', '', { file: info });
+      sent += 1;
+    } catch (err) { fail(err); }
+  }
+  if (sent) scrollBottom();
+}
+async function openFile(roomId, f) {   // 올라온 파일을 받아서 사진은 크게 보여 주고, 나머지는 내려받는다
+  try {
+    const item = (await get(R('files', roomId, f.id))).val();
+    if (!item || typeof item.data !== 'string' || !item.data.startsWith('data:')) throw userError('파일을 찾을 수 없어요.');
+    if (isPhoto(item.data)) {
+      return openModal(f.name, h('div', null, h('img', { src: item.data, alt: f.name, style: 'display:block;max-width:100%;max-height:70vh;margin:0 auto;border-radius:10px' }),
+        h('div', { class: 'form-actions' }, h('a', { class: 'btn', href: item.data, download: f.name.split('/').pop() }, icon('down'), '내려받기'))), null, true);
+    }
+    const blob = await (await fetch(item.data)).blob();
+    const link = h('a', { href: URL.createObjectURL(blob), download: f.name.split('/').pop() });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+  } catch (err) { fail(err); }
 }
 
 /* ───────────── 친구 ───────────── */
@@ -1655,19 +1772,19 @@ async function signOrder(secret, roomId, act, to, nonce, t, text) {
   const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`${roomId}\n${act}\n${to}\n${nonce}\n${t}\n${text}`));
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-async function sendText(room, text, act = '', to = '') {   // to: 승인·취소처럼 AI 하나만 받아야 하는 지시의 대상
+async function sendText(room, text, act = '', to = '', extra = {}) {   // to: 승인·취소처럼 AI 하나만 받아야 하는 지시의 대상, extra: 첨부 파일 등
   const n = lastN(S.raw.get(room.id)) + 1;
   const key = push(R('messages', room.id)).key;
   const mid = room.me.mid;
   const order = {};
-  if (room.coding && codeKey(room.id)) {   // 코딩방에서는 내 지시임을 증명하는 서명을 붙인다
+  if (room.coding && codeKey(room.id) && !extra.file) {   // 파일만 올린 것은 지시가 아니다. 코딩방에서는 내 지시임을 증명하는 서명을 붙인다
     const nonce = randomId(16);
     const t = Math.round(now());
     Object.assign(order, { act, to, nonce, t, sig: await signOrder(codeKey(room.id), room.id, act, to, nonce, t, text) });
   }
   await update(R(), {
-    [`messages/${room.id}/${key}`]: { m: mid, name: room.me.label, kind: 'human', text, ts: SV, ...order },
-    [`rooms/${room.id}/last`]: { key, name: room.me.label, kind: 'human', text: text.slice(0, 120), ts: SV, n },
+    [`messages/${room.id}/${key}`]: { m: mid, name: room.me.label, kind: 'human', text, ts: SV, ...order, ...extra },
+    [`rooms/${room.id}/last`]: { key, name: room.me.label, kind: 'human', text: (text || (extra.file ? (extra.file.thumb ? '(사진) ' : '(파일) ') + extra.file.name : '')).slice(0, 120), ts: SV, n },
     [`rooms/${room.id}/streak`]: 0,   // 사람이 말하면 AI 연속 대화 수를 다시 센다
     [`rooms/${room.id}/members/${mid}/read`]: key,
     [`rooms/${room.id}/members/${mid}/read_n`]: n,
@@ -1785,6 +1902,13 @@ function openSettings() {
   const savedTheme = store.get('theme');
   openModal('설정', h('div', null,
     h('div', { class: 'set-group' }, h('h4', null, '계정'),
+      (() => {
+        const pick = h('input', { type: 'file', accept: 'image/*', hidden: true });
+        pick.addEventListener('change', () => { if (pick.files[0]) setPhoto(pick.files[0]).then(openSettings, fail); });
+        return h('div', { class: 'photo-row' }, avatar(S.uid, S.me.name, 'human', S.me.photo), pick,
+          h('button', { type: 'button', class: 'btn', onclick: () => pick.click() }, '프로필 사진 바꾸기'),
+          S.me.photo ? h('button', { type: 'button', class: 'btn', onclick: () => setPhoto(null).then(openSettings, fail) }, '지우기') : null);
+      })(),
       h('form', { class: 'name-row', onsubmit: (e) => {
         e.preventDefault();
         const value = cleanName(name.value, 20);
@@ -1792,7 +1916,7 @@ function openSettings() {
         update(R('users', S.uid), { name: value }).then(() => {
           S.me.name = value;
           $('#me-name').textContent = value;
-          $('#me-avatar').textContent = [...value][0] || '?';
+          drawMe();
           toast('이름을 바꿨어요. 새로 들어가는 방부터 이 이름으로 보여요.');
         }, fail);
       } }, name, h('button', { type: 'submit', class: 'btn' }, '이름 바꾸기')),
@@ -2095,7 +2219,7 @@ function renderInfo(room, force) {
   parts.push(h('section', { class: 'sec' },
     h('h4', null, `참가자 ${room.members.length}`),
     h('ul', { class: 'members' }, room.members.map((m) => h('li', null,
-      avatar(m.mid, m.label, m.kind),
+      avatar(m.mid, m.label, m.kind, m.photo),
       h('div', { class: 'mname' },
         h('span', { class: 'mlabel' }, m.label, m.me ? h('em', null, '나') : null),
         h('span', { class: 'msub' }, h('i', { class: 'dot' + (m.online ? ' on' : '') }),
@@ -2288,6 +2412,10 @@ function toMessage(id, key, m) {   // 데이터베이스의 메시지를 화면�
     id: key, kind, mid: m.m || null, name: String(m.name || ''), mine: !!m.m && m.m === S.mine[id],
     text: String(m.text == null ? '' : m.text), ts: Number(m.ts) || now(),
     card: m.card === 'plan' || m.card === 'result' ? m.card : '',   // 코딩방의 계획·작업 결과
+    file: m.file && typeof m.file === 'object' && /^[\w-]+$/.test(String(m.file.id)) ? {   // 올린 사진·파일
+      id: String(m.file.id), name: String(m.file.name || '파일').slice(0, 200), size: Number(m.file.size) || 0,
+      thumb: isPhoto(m.file.thumb) ? m.file.thumb : null,
+    } : null,
     steps: Array.isArray(m.steps) ? m.steps.filter((s) => s && s.k).map((s) => ({ k: String(s.k), t: String(s.t || '') })) : [],   // AI가 한 일
     stat: m.stat && typeof m.stat === 'object' ? { add: Number(m.stat.add) || 0, del: Number(m.stat.del) || 0 } : null,
   };
@@ -2300,13 +2428,20 @@ function msgNode(m, prev, fresh) {
   const cont = !!prev && prev.kind !== 'system' && prev.mid === m.mid && m.ts - prev.ts < 180000 && dayKey(prev.ts) === dayKey(m.ts);
   const bubble = h('div', { class: 'bubble' + (m.card ? ' card ' + m.card : ''), title: fullFmt.format(m.ts) });
   if (m.card) bubble.append(h('div', { class: 'card-tag' }, m.card === 'plan' ? '계획' : '작업 결과'));
+  if (m.file) {
+    const roomId = S.cur;
+    bubble.append(m.file.thumb
+      ? h('img', { class: 'photo-msg', src: m.file.thumb, alt: m.file.name, title: '누르면 크게 보기', onclick: () => openFile(roomId, m.file) })
+      : h('button', { type: 'button', class: 'file-msg', title: '누르면 내려받기', onclick: () => openFile(roomId, m.file) },
+        icon('file'), h('span', null, m.file.name, h('small', null, fileSize(m.file.size)))));
+  }
   renderText(bubble, m.text);
   if (m.steps.length || m.stat) bubble.append(stepsBox(m));
   const row = h('div', { class: 'brow' }, bubble, cont ? null : h('time', null, timeFmt.format(m.ts)));
   const cls = 'msg' + (m.mine ? ' mine' : '') + (cont ? ' cont' : '') + (fresh ? ' new' : '');
   if (m.mine) return h('div', { class: cls }, row);
   return h('div', { class: cls },
-    cont ? h('span') : avatar(m.mid, m.name, m.kind),
+    cont ? h('span') : avatar(m.mid, m.name, m.kind, ((((S.raw.get(S.cur) || {}).members || {})[m.mid]) || {}).photo),
     h('div', null,
       cont ? null : h('div', { class: 'meta' }, h('span', null, m.name), m.kind === 'ai' ? h('span', { class: 'tag' }, 'AI') : null),
       row,
@@ -2642,6 +2777,8 @@ function manual() {
         'AI는 그 CMD 창이 켜져 있는 동안만 대답합니다. AI를 켠 사람의 컴퓨터와 사용량으로 돌아갑니다.',
         ['다른 사람이 쓰는 AI 아이디와 겹치면 명령 뒤에 ', code('--id 내아이디'), ' 를 붙이세요.'],
         'AI끼리 대화가 길어지면 대화방 정보의 [AI 응답 일시정지]로 멈출 수 있습니다.',
+        '입력 칸 왼쪽의 클립 버튼으로 사진·파일을, 폴더 버튼으로 폴더를 통째로 올립니다. (파일 하나에 3MB, 한 번에 30개까지)',
+        '프로필 사진은 왼쪽 아래 내 계정 → [프로필 사진 바꾸기]에서 바꿉니다.',
         '이 설명서는 왼쪽 아래 물음표(?) 버튼으로 다시 볼 수 있습니다.',
       ]],
     ]],
@@ -2905,6 +3042,17 @@ $('#auth-form').addEventListener('submit', submitAuth);
 $('#google-btn').addEventListener('click', googleLogin);
 $('#logout-btn').addEventListener('click', logout);
 $('#help-btn').addEventListener('click', () => openHelp());
+$('#file-btn').addEventListener('click', () => $('#file-input').click());
+$('#folder-btn').addEventListener('click', () => $('#folder-input').click());
+for (const id of ['#file-input', '#folder-input']) {
+  $(id).addEventListener('change', (e) => { sendFiles(e.target.files); e.target.value = ''; });
+}
+$('#msgs').addEventListener('dragover', (e) => e.preventDefault());
+$('#msgs').addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files.length) sendFiles(e.dataTransfer.files); });
+$('#input').addEventListener('paste', (e) => {   // 복사한 사진을 붙여 넣으면 바로 올린다
+  const files = [...(e.clipboardData ? e.clipboardData.files : [])];
+  if (files.length) { e.preventDefault(); sendFiles(files); }
+});
 $('#me-btn').addEventListener('click', openSettings);
 $('#tab-chat').addEventListener('click', () => setTab('chat'));
 $('#tab-code').addEventListener('click', () => setTab('code'));
