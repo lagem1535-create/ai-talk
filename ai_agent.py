@@ -66,7 +66,7 @@ TYPING_MS = 30000          # '입력 중'(발언권)이 유지되는 시간
 MAX_TEXT = 8000            # 메시지 한 개의 최대 길이
 MAX_HISTORY_CHARS = 12000  # AI에게 보여 주는 대화 기록의 최대 글자 수
 MAX_MESSAGE_CHARS = 1500   # 대화 기록 속 메시지 한 개의 최대 글자 수
-CODE_RE = re.compile(r"[^A-Z0-9]")
+CODE_RE = re.compile(r"[^A-Z0-9가-힣]")   # 초대코드에 쓸 수 있는 글자: 영어·숫자·한글
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,19}$")
 ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 ALIAS_ADJ = ["졸린", "용감한", "수줍은", "배고픈", "느긋한", "엉뚱한", "씩씩한", "조용한",
@@ -854,7 +854,7 @@ class Agent:
         """초대코드로 방에 들어간다. 반환: (방 id, 방 정보, 내 참가자 id)"""
         fb = self.fb
         code = CODE_RE.sub("", code.upper())
-        rid = fb.get(f"codes/{code}") if code else None
+        rid = fb.get("codes/" + urllib.parse.quote(code)) if code else None
         raw = fb.get(f"rooms/{rid}") if rid else None
         if not raw or not raw.get("meta"):
             die(f"초대코드 {code}: 해당하는 대화방이 없습니다.")

@@ -646,7 +646,7 @@ import {
   GoogleAuthProvider, signInWithPopup, signOut,
 } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
 import {
-  getDatabase, ref, get, set, update, push, onValue, query, orderByKey, limitToLast, endBefore, serverTimestamp,
+  getDatabase, ref, get, set, update, push, onValue, runTransaction, query, orderByKey, limitToLast, endBefore, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js';
 
 /* ───────────── Firebase 설정 ───────────── */
@@ -771,6 +771,7 @@ function randomId(n, alphabet = ID_ALPHABET) {
   return [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
 }
 const fmtCode = (code) => `${code.slice(0, 4)}-${code.slice(4)}`;
+const cleanCode = (code) => String(code).toUpperCase().replace(/[^A-Z0-9가-힣]/g, '');   // 초대코드에 쓸 수 있는 글자: 영어·숫자·한글
 const cleanName = (value, max) => String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').split(/\s+/).filter(Boolean).join(' ').slice(0, max);
 
 function avatar(seed, label, kind, photo) {
@@ -1047,6 +1048,7 @@ function viewRoom(id) {
     coding: !!meta.coding,   // 코딩방: AI가 연결된 프로젝트의 파일을 고친다
     name_mode: MODES[meta.name_mode] ? meta.name_mode : 'realname',
     code: meta.code ? fmtCode(String(meta.code)) : null,
+    custom: meta.code && meta.custom ? String(meta.custom) : null,   // 내가 정한 초대코드
     is_owner: meta.owner === S.uid,
     ai_paused: !!meta.ai_paused,
     ai_chain_limit: Number(meta.ai_chain_limit) || 0,
@@ -1141,7 +1143,7 @@ async function createRoom(name, kind, mode, alias) {
 }
 
 async function joinRoom(code, alias) {
-  code = String(code).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  code = cleanCode(code);
   const id = code ? (await get(R('codes', code))).val() : null;
   const raw = id ? (await get(R('rooms', id))).val() : null;
   if (!raw || !raw.meta) throw userError('초대코드에 해당하는 대화방이 없습니다.');
@@ -1180,6 +1182,7 @@ async function deleteRoom(room) {
   const raw = S.raw.get(room.id);
   const changes = { [`rooms/${room.id}`]: null, [`messages/${room.id}`]: null, [`files/${room.id}`]: null };
   if (raw.meta.code) changes[`codes/${raw.meta.code}`] = null;
+  if (raw.meta.custom) changes[`codes/${raw.meta.custom}`] = null;
   for (const m of Object.values(raw.members || {})) changes[`userRooms/${m.uid}/${room.id}`] = null;
   await update(R(), changes);
 }
@@ -1194,6 +1197,24 @@ async function newCode(room) {
   let code;
   do { code = randomId(8, CODE_ALPHABET); } while ((await get(R('codes', code))).exists());
   await update(R(), { [`codes/${raw.meta.code}`]: null, [`codes/${code}`]: room.id, [`rooms/${room.id}/meta/code`]: code });
+}
+// 내가 정한 초대코드. 원래 8자리 코드는 그대로 두고 하나를 더 쓴다. 이미 누가 쓰는 코드는 쓸 수 없다.
+async function setCustomCode(room, value) {
+  const code = cleanCode(value);
+  const old = S.raw.get(room.id).meta.custom || null;
+  if (code === old) return;
+  if (code) {
+    if ([...code].length < 2 || [...code].length > 20) throw userError('초대코드는 2~20자로 정해 주세요. (영어·숫자·한글)');
+    const taken = userError('이미 있는 초대코드예요. 다른 것으로 정해 주세요.');
+    let result;
+    try {   // 비어 있을 때만 차지한다 (두 사람이 동시에 같은 코드를 정해도 한 사람만 된다)
+      result = await runTransaction(R('codes', code), (cur) => (cur === null ? room.id : undefined), { applyLocally: false });
+    } catch (_) { throw taken; }   // 규칙으로 막혀 있는 경우도 이미 있는 코드다
+    if (!result.committed) throw taken;
+  }
+  const changes = { [`rooms/${room.id}/meta/custom`]: code || null };
+  if (old) changes[`codes/${old}`] = null;
+  await update(R(), changes);
 }
 // 1:1 대화방을 열거나(이미 있으면 다시 열기) 새로 만든다. a = 나, b = 상대 ({ mid, uid, label, kind, anon_no, seen })
 async function ensureDm(id, mode, a, b, text) {
@@ -2076,7 +2097,7 @@ function renderChrome(room) {
 /* ───────────── 오른쪽 정보 패널 ───────────── */
 function renderInfo(room, force) {
   const box = $('#info-body');
-  const sig = JSON.stringify([room.id, room.name, room.code, room.kind, room.is_dm, room.name_mode, room.is_owner,
+  const sig = JSON.stringify([room.id, room.name, room.code, room.custom, room.kind, room.is_dm, room.name_mode, room.is_owner,
     room.ai_paused, room.ai_chain_limit, room.members, S.cli, S.count, S.friends, S.projects, S.roomProject[room.id]]);
   if (!force && box.dataset.sig === sig) return;
   const focused = document.activeElement;
@@ -2161,8 +2182,9 @@ function renderInfo(room, force) {
     parts.push(h('section', { class: 'sec' },
       h('h4', null, '초대코드'),
       h('div', { class: 'code-row' },
-        h('code', { class: 'code' }, room.code),
-        h('button', { type: 'button', class: 'icon-btn', title: '초대코드 복사', 'aria-label': '초대코드 복사', onclick: () => copyText(room.code, '초대코드를 복사했어요') }, icon('copy'))),
+        flipCode(room),
+        h('button', { type: 'button', class: 'icon-btn', title: '초대코드 복사', 'aria-label': '초대코드 복사', onclick: () => copyText(codeFlip.shown || room.code, '초대코드를 복사했어요') }, icon('copy'))),
+      room.custom ? h('p', { class: 'hint' }, '원래 코드와 내가 정한 코드가 번갈아 보여요. 둘 다 쓸 수 있습니다.') : null,
       full ? h('p', { class: 'hint' }, '두 명이 모두 들어와 있어서 더 초대할 수 없어요.') : [
         h('h4', null, room.coding ? '코딩할 AI 부르기' : 'AI 초대하기'),
         h('div', { class: 'seg' }, CLIS.map(([id, title]) =>
@@ -2270,6 +2292,7 @@ function renderInfo(room, force) {
     h('h4', null, '방 관리'),
     h('div', { class: 'stack' },
       room.is_owner && !room.is_dm ? act('edit', '방 이름 바꾸기', () => askRename(room)) : null,
+      room.is_owner && room.code ? act('edit', room.custom ? '내 초대코드 바꾸기' : '초대코드 직접 정하기', () => askCustomCode(room)) : null,
       room.is_owner && room.code ? act('refresh', '초대코드 새로 만들기', () => askNewCode(room)) : null,
       !room.is_owner || room.is_dm ? act('logout', '대화방 나가기', () => askLeave(room)) : null,
       room.is_owner ? act('trash', '대화방 삭제', () => askDelete(room), 'danger') : null)));
@@ -2277,6 +2300,44 @@ function renderInfo(room, force) {
   box.replaceChildren(...parts);
 }
 
+// 초대코드 칸: 원래 8자리와 내가 정한 코드를 3초마다 번갈아 보여 준다
+const codeFlip = { el: null, list: [], i: 0, shown: '' };
+function flipCode(room) {
+  codeFlip.list = [room.code, room.custom].filter(Boolean);
+  codeFlip.i = 0;
+  codeFlip.shown = room.code;
+  codeFlip.el = h('code', { class: 'code' }, room.code);
+  return codeFlip.el;
+}
+setInterval(() => {
+  const f = codeFlip;
+  if (!f.el || !f.el.isConnected || f.list.length < 2) return;
+  if (String(getSelection()) && f.el.contains(getSelection().anchorNode)) return;   // 골라서 복사하는 중이면 그대로 둔다
+  f.i = (f.i + 1) % f.list.length;
+  f.shown = f.list[f.i];
+  f.el.textContent = f.shown;
+}, 3000);
+function askCustomCode(room) {   // 내가 정한 초대코드는 맞히기 쉬우므로 경고를 먼저 보여 준다
+  const code = h('input', { type: 'text', maxlength: 24, value: room.custom || '', placeholder: '예: 우리반모임, MYROOM2026', autocomplete: 'off', spellcheck: 'false' });
+  const err = h('p', { class: 'err', hidden: true });
+  const save = (value) => setCustomCode(room, value).then(() => {
+    closeModal();
+    toast(cleanCode(value) ? '초대코드를 정했어요.' : '내가 정한 초대코드를 지웠어요.');
+  }, (ex) => formError(err, ex));
+  openModal('초대코드 직접 정하기', h('form', { class: 'trust', onsubmit: (e) => { e.preventDefault(); save(code.value); } },
+    h('p', { class: 'trust-warn' }, '주의: 쉬운 초대코드는 모르는 사람도 맞힐 수 있습니다.'),
+    h('ul', null,
+      h('li', null, '초대코드를 아는 사람은 누구나 이 방에 들어와 대화를 볼 수 있습니다. 이름·생일·1234 같은 뻔한 것은 피하세요.'),
+      h('li', null, '원래 8자리 코드는 그대로 남아서, 둘 중 어느 것으로도 들어올 수 있습니다.'),
+      h('li', null, '영어·숫자·한글로 2~20자. 띄어쓰기와 기호는 빠지고 영어는 대문자로 바뀝니다. 이미 누가 쓰는 코드는 쓸 수 없습니다.'),
+      h('li', null, '[초대코드 새로 만들기]는 8자리 코드만 바꿉니다. 내가 정한 코드를 없애려면 여기서 지우세요.')),
+    h('label', { class: 'field' }, h('span', null, '내가 정할 초대코드'), code),
+    err,
+    h('div', { class: 'form-actions' },
+      h('button', { type: 'button', class: 'btn', onclick: closeModal }, '취소'),
+      room.custom ? h('button', { type: 'button', class: 'btn', onclick: () => save('') }, '지우기') : null,
+      h('button', { type: 'submit', class: 'btn primary danger' }, '위험을 알고 정하기'))), code);
+}
 function askAiRename(room, member) {   // 위험한 기능이라 경고를 먼저 보여 준다
   const name = h('input', { type: 'text', maxlength: 20, value: member.label, required: true });
   const err = h('p', { class: 'err', hidden: true });
@@ -2997,8 +3058,8 @@ function openCreate() {
 }
 
 function openJoin() {
-  const code = h('input', { type: 'text', maxlength: 12, placeholder: 'ABCD-EFGH', required: true, autocomplete: 'off', spellcheck: 'false' });
-  code.addEventListener('input', () => { code.value = code.value.toUpperCase(); });
+  const code = h('input', { type: 'text', maxlength: 24, placeholder: 'ABCD-EFGH', required: true, autocomplete: 'off', spellcheck: 'false' });
+  code.addEventListener('input', (e) => { if (!e.isComposing) code.value = code.value.toUpperCase(); });   // 한글을 입력하는 중에는 건드리지 않는다
   const alias = h('input', { type: 'text', maxlength: 20, placeholder: '가명방일 때만 쓰여요 (비우면 자동)' });
   const err = h('p', { class: 'err', hidden: true });
   const submit = h('button', { type: 'submit', class: 'btn primary' }, '입장');
