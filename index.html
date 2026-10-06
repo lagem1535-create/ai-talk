@@ -304,6 +304,10 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .file-msg small { display: block; font-size: 12px; opacity: .7; }
 .photo-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .photo-row .avatar { width: 56px; height: 56px; font-size: 20px; }
+.settings-page { height: 100vh; height: 100dvh; overflow-y: auto; background: var(--bg); }
+.settings-head { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.settings-head h2 { margin: 0; font-size: 18px; }
+.settings-body { width: min(640px, 100%); margin: 0 auto; padding: 20px 16px 48px; }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .pick { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; font-weight: 600; }
 .pick.on { border-color: var(--ink); background: var(--panel-2); }
@@ -630,6 +634,15 @@ button.me:hover { background: var(--panel-2); }
 </div>
 <div id="scrim" class="scrim"></div>
 
+<!-- 설정 화면 (/setting) -->
+<section id="settings" class="settings-page" hidden>
+  <header class="settings-head">
+    <button type="button" class="icon-btn" id="settings-back" title="돌아가기" aria-label="돌아가기"><span data-icon="back"></span></button>
+    <h2>설정</h2>
+  </header>
+  <div id="settings-body" class="settings-body"></div>
+</section>
+
 <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
   <div class="modal-card">
     <div class="modal-head"><h3 id="modal-title"></h3>
@@ -873,6 +886,9 @@ function showAuthError(text) {
   $('#au-err').hidden = !text;
 }
 function showAuth() {
+  if (location.pathname !== '/login') S.want = location.pathname;   // 로그인한 뒤 돌아갈 곳
+  setPath('/login', true);
+  $('#settings').hidden = true;
   $('#main').hidden = true;
   $('#auth').hidden = false;
   document.body.classList.remove('in-room');
@@ -956,6 +972,9 @@ function startSession(uid, profile) {
   drawMe();
   showRoomPane();
   renderRoomList();
+  if (S.want) setPath(S.want, true);
+  S.want = null;
+  showPage();
   if (!store.get('helpSeen')) {   // 이 브라우저에서 처음 들어왔으면 사용법부터
     store.set('helpSeen', '1');
     openHelp();
@@ -1546,6 +1565,7 @@ async function pcCrypt(nonce, label, bytes) {
 const toHex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 const fromHex = (hex) => new Uint8Array((hex.match(/../g) || []).map((x) => parseInt(x, 16)));
 // 휴대폰에서 적은 명령 한 줄을 내 컴퓨터에서 실행하고 출력을 받아 온다
+const PC_RUN_MS = 24 * 3600 * 1000;   // 명령 하나가 돌 수 있는 최대 시간 (pc_helper.py 의 RUN_TIMEOUT 과 같다)
 async function sendPcCommand(command, kind = 'cmd') {   // kind: cmd(명령 한 줄) / file(저장할 파일 정보)
   const enc = new TextEncoder();
   const nonce = randomId(16);
@@ -1556,14 +1576,20 @@ async function sendPcCommand(command, kind = 'cmd') {   // kind: cmd(명령 한 
   const req = push(R('pc', S.uid, 'requests'));
   await set(req, { kind, nonce, t, sig, data });
   return new Promise((resolve) => {
+    let got = false;
+    let timer = setTimeout(() => finish({ error: '컴퓨터가 응답하지 않아요. (컴퓨터가 꺼져 있거나 연결 프로그램이 예전 것이에요)' }), 130000);
     const finish = (value) => { stop(); clearTimeout(timer); set(req, null).catch(() => {}); resolve(value); };
     const stop = onValue(req, async (snap) => {
       const r = snap.val() || {};
+      if (r.got && !got) {   // 컴퓨터가 받았다. 이제부터는 끝날 때까지(최대 24시간) 기다린다
+        got = true;
+        clearTimeout(timer);
+        timer = setTimeout(() => finish({ error: '24시간이 지나도 끝나지 않았어요.' }), PC_RUN_MS + 60000);
+      }
       if (!r.state) return;
       if (r.state !== 'done') return finish({ error: r.state === 'disabled' ? '컴퓨터에서 실행을 허용하지 않았어요. 연결 프로그램을 끄고, 명령 끝에 --commands 를 붙여 다시 켜 주세요.' : '컴퓨터가 요청을 받지 않았어요. 컴퓨터 키를 확인해 주세요.' });
       finish({ code: r.code, out: new TextDecoder().decode(await pcCrypt(nonce, 'o', fromHex(String(r.out || '')))) });
     });
-    const timer = setTimeout(() => finish({ error: '컴퓨터가 응답하지 않아요. (명령이 2분 넘게 걸리거나 컴퓨터가 꺼져 있어요)' }), 130000);
   });
 }
 async function openPcTerminal() {
@@ -1580,26 +1606,33 @@ async function openPcTerminal() {
     ], '위험을 알고 사용'))) return;
     store.set('pcCmdOk', '1');
   }
+  if (!store.get('pcCmdLong')) {   // 24시간 실행에 대한 세 번째 확인
+    if (!(await trustBox('마지막 확인: 24시간 실행', '주의: 명령 하나가 최대 24시간까지 내 컴퓨터에서 계속 실행됩니다.', [
+      '휴대폰을 끄거나 이 창을 닫아도, 이미 시작한 명령은 컴퓨터에서 계속 돌아갑니다.',
+      '멈추려면 컴퓨터에서 연결 프로그램 창을 닫아야 합니다. 여기서는 멈출 수 없습니다.',
+      '이 창을 닫으면 그 명령의 출력은 볼 수 없습니다.',
+      '여러 명령을 동시에 돌릴 수 있습니다. 끝나지 않는 명령을 여러 번 보내면 컴퓨터가 느려집니다.',
+    ], '알고 사용'))) return;
+    store.set('pcCmdLong', '1');
+  }
   const log = h('pre', { class: 'pc-log' }, `${S.pc.name || '내 컴퓨터'} 에 연결됨. 명령을 적고 Enter 를 누르세요. (예: dir, python --version)\n`);
   const input = h('input', { type: 'text', maxlength: 2000, placeholder: '명령 입력', spellcheck: 'false', autocomplete: 'off', autocapitalize: 'off' });
   const print = (text) => { log.append(text); log.scrollTop = log.scrollHeight; };
-  let busy = false;
   openModal('내 컴퓨터에서 명령 실행', h('div', null, log,
     h('form', { class: 'name-row', style: 'margin-top:10px', onsubmit: async (e) => {
       e.preventDefault();
       const command = input.value.trim();
-      if (!command || busy) return;
-      busy = true;
+      if (!command) return;
       input.value = '';
+      input.focus();
       print(`\n> ${command}\n`);
+      const head = `\n[${command.slice(0, 40)} 의 결과]\n`;   // 여러 명령이 동시에 돌 수 있어서 어느 명령의 결과인지 적는다
       try {
         const r = await sendPcCommand(command);
-        print(r.error ? `(${r.error})\n` : `${r.out}${r.out.endsWith('\n') || !r.out ? '' : '\n'}(종료 코드 ${r.code})\n`);
-      } catch (err) { print('(보내지 못했어요)\n'); }
-      busy = false;
-      input.focus();
+        print(head + (r.error ? `(${r.error})\n` : `${r.out}${r.out.endsWith('\n') || !r.out ? '' : '\n'}(종료 코드 ${r.code})\n`));
+      } catch (err) { print(head + '(보내지 못했어요)\n'); }
     } }, input, h('button', { type: 'submit', class: 'btn primary' }, '실행')),
-    h('p', { class: 'hint' }, '명령 하나는 최대 2분, 출력은 마지막 6000자까지 보여 줍니다. 계속 켜져 있는 프로그램(서버 등)은 여기서 실행하지 마세요.')), input, true);
+    h('p', { class: 'hint' }, '명령 하나는 최대 24시간까지 실행되고, 출력은 끝난 뒤에 마지막 6000자까지 보여 줍니다. 이 창을 닫아도 명령은 컴퓨터에서 계속 돌지만 출력은 볼 수 없어요.')), input, true);
 }
 async function connectPc(value) {   // 위험한 기능이라 두 번 확인받는다
   const key = value.trim();
@@ -1867,10 +1900,11 @@ function renderRoomList() {
   }
   list.replaceChildren(...nodes);
 }
-function setTab(tab) {
+function setTab(tab, nav = true) {
   S.tab = tab;
   store.set('tab', tab);
   renderRoomList();
+  if (nav) setPath(PATHS[tab]);
 }
 
 /* ───────────── 프로젝트 (방을 모아 두는 폴더, 나만 보임) ───────────── */
@@ -1903,7 +1937,38 @@ function projectSelect(room) {   // 대화방 정보에서 이 방을 어느 프
   return select;
 }
 
-/* ───────────── 설정 (계정을 누르면 열림) ───────────── */
+/* ───────────── 주소 (/talk · /code · /login · /setting) ───────────── */
+const PATHS = { chat: '/talk', code: '/code' };
+function setPath(path, replace) {
+  if (location.pathname === path) return;
+  try { history[replace ? 'replaceState' : 'pushState'](null, '', path); } catch (_) { /* 주소를 못 바꿔도 화면은 그대로 쓴다 */ }
+}
+function closeSettings() {
+  $('#settings').hidden = true;
+  $('#settings-body').replaceChildren();
+  $('#main').hidden = false;
+}
+function showSettings(body) {
+  $('#settings-body').replaceChildren(body);
+  $('#main').hidden = true;
+  $('#settings').hidden = false;
+  setPath('/setting');
+}
+function showPage() {   // 지금 주소에 맞는 화면을 보여 준다
+  if (!S.uid) return;
+  const path = location.pathname.replace(/\/+$/, '');
+  if (path === '/setting') return openSettings();
+  closeSettings();
+  if (path === '/talk' || path === '/code') {
+    S.tab = path === '/code' ? 'code' : 'chat';
+    renderRoomList();
+  } else {
+    setPath(PATHS[S.tab], true);   // 로그인한 채로 / 나 /login 에 오면 방 목록으로
+  }
+}
+window.addEventListener('popstate', showPage);
+
+/* ───────────── 설정 (계정을 누르면 열림, 주소는 /setting) ───────────── */
 function applySettings() {
   document.documentElement.style.setProperty('--fs', { small: '14px', large: '17px' }[store.get('font')] || '15px');
 }
@@ -1921,7 +1986,7 @@ function openSettings() {
   const enterSwitch = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(enter), 'aria-label': 'Enter 로 보내기',
     onclick: () => { setPref('enter', enter ? 'off' : 'on'); openSettings(); } });
   const savedTheme = store.get('theme');
-  openModal('설정', h('div', null,
+  showSettings(h('div', null,
     h('div', { class: 'set-group' }, h('h4', null, '계정'),
       (() => {
         const pick = h('input', { type: 'file', accept: 'image/*', hidden: true });
@@ -1947,7 +2012,7 @@ function openSettings() {
         savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : 'system',
         (v) => setTheme(v === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : v))),
       row('글자 크기', '', seg('font', [['small', '작게'], ['normal', '보통'], ['large', '크게']], store.get('font') || 'normal', applySettings)),
-      row('처음 여는 탭', '', seg('tab', [['chat', '대화'], ['code', '코드']], S.tab, setTab))),
+      row('처음 여는 탭', '', seg('tab', [['chat', '대화'], ['code', '코드']], S.tab, (v) => setTab(v, false)))),
     h('div', { class: 'set-group' }, h('h4', null, '입력'),
       row('Enter 로 보내기', enter ? '끄면 Enter 는 줄바꿈, Ctrl+Enter 로 보냅니다.' : '지금은 Ctrl+Enter 로 보냅니다.', enterSwitch)),
     h('div', { class: 'set-group' }, h('h4', null, 'MCP (AI에게 붙이는 외부 도구)'),
@@ -1989,6 +2054,7 @@ function openSettings() {
     h('div', { class: 'set-group' }, h('h4', null, '기타'),
       h('div', { class: 'stack' },
         h('button', { type: 'button', class: 'btn', onclick: () => openHelp() }, icon('help'), '설명서 보기'),
+        h('a', { class: 'btn', href: '/' + encodeURIComponent('설명서.pdf'), target: '_blank', rel: 'noopener' }, icon('down'), '설명서 PDF 받기'),
         h('button', { type: 'button', class: 'btn', onclick: () => openProject() }, icon('folder'), '새 프로젝트 만들기'),
         h('button', { type: 'button', class: 'btn danger', onclick: logout }, icon('logout'), '로그아웃')))));
 }
@@ -2011,6 +2077,7 @@ function openRoom(id) {
   S.cur = id;
   const opened = S.byId.get(id);
   if (opened) S.tab = opened.coding ? 'code' : 'chat';
+  if ($('#settings').hidden) setPath(PATHS[S.tab], true);
   document.body.classList.add('in-room');
   input.value = cacheOf(id).draft;
   autosize();
@@ -3115,6 +3182,7 @@ $('#input').addEventListener('paste', (e) => {   // 복사한 사진을 붙여 �
   if (files.length) { e.preventDefault(); sendFiles(files); }
 });
 $('#me-btn').addEventListener('click', openSettings);
+$('#settings-back').addEventListener('click', () => { closeSettings(); setPath(PATHS[S.tab]); });
 $('#tab-chat').addEventListener('click', () => setTab('chat'));
 $('#tab-code').addEventListener('click', () => setTab('code'));
 $('#project-add').addEventListener('click', () => openProject());

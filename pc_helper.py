@@ -22,6 +22,7 @@ import re
 import secrets
 import subprocess
 import sys
+import threading
 import time
 
 import ai_agent as A
@@ -29,6 +30,7 @@ import ai_agent as A
 KEY_PATH = os.path.join(A.BASE_DIR, "data", "agent", "pc-key.txt")
 SESSIONS = os.path.join(A.BASE_DIR, "data", "agent", "sessions.json")
 MAX_AGE_MS = 5 * 60000   # 이보다 오래된 요청은 받지 않는다
+RUN_TIMEOUT = 24 * 3600  # 명령 하나가 돌 수 있는 최대 시간(초)
 # ai_agent.py 에 넘겨도 되는 옵션 (값이 있는 것 / 없는 것)
 WITH_VALUE = {"--cli", "--code", "--count", "--id", "--name", "--alias", "--persona", "--model", "--mcp", "--mcp-add",
               "--project", "--github", "--key", "--site", "--history", "--timeout"}
@@ -102,10 +104,10 @@ def run_command(fb, owner, key, req, seen, allowed):
     A.log(f"명령 실행: {command[:120]}")
     try:
         p = subprocess.run(command, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                           cwd=os.path.expanduser("~"), timeout=120)
+                           cwd=os.path.expanduser("~"), timeout=RUN_TIMEOUT)
         code, raw = p.returncode, p.stdout
     except subprocess.TimeoutExpired as e:
-        code, raw = -1, (e.stdout or b"") + "\n(120초가 지나 중단했습니다)".encode("utf-8")
+        code, raw = -1, (e.stdout or b"") + "\n(24시간이 지나 중단했습니다)".encode("utf-8")
     for enc in ("utf-8", "cp949"):   # 윈도우 명령의 출력은 cp949 인 경우가 많다
         try:
             text = raw.decode(enc)
@@ -156,11 +158,11 @@ def save_file(fb, owner, key, req, seen, allowed):
         elif ext in RUNNERS:
             try:
                 p = subprocess.run([*RUNNERS[ext], path], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, cwd=SAVE_DIR, timeout=120,
+                                   stderr=subprocess.STDOUT, cwd=SAVE_DIR, timeout=RUN_TIMEOUT,
                                    env={**os.environ, "PYTHONIOENCODING": "utf-8"})
                 code, raw = p.returncode, p.stdout
             except subprocess.TimeoutExpired as e:
-                code, raw = -1, (e.stdout or b"") + "\n(120초가 지나 중단했습니다)".encode("utf-8")
+                code, raw = -1, (e.stdout or b"") + "\n(24시간이 지나 중단했습니다)".encode("utf-8")
             except OSError as e:
                 code, raw = -1, f"실행하지 못했습니다: {e}".encode("utf-8")
             try:
@@ -247,6 +249,11 @@ def main():
         print("\n  한 번 더 확인합니다. 이 창이 켜져 있는 동안 계속 허용됩니다. 다 쓰면 꼭 창을 닫으세요.")
         if not confirm("정말 허용할까요?"):
             A.die("취소했습니다.")
+        print("\n  마지막 확인입니다. 명령 하나가 최대 24시간까지 계속 실행됩니다.")
+        print("  - 휴대폰을 꺼도, 앱을 닫아도 이미 시작한 명령은 이 컴퓨터에서 계속 돌아갑니다.")
+        print("  - 멈추려면 이 창을 닫으세요. 여러 명령이 동시에 돌 수 있습니다.")
+        if not confirm("24시간 실행을 허용할까요?"):
+            A.die("취소했습니다.")
     fb = A.Firebase()
     interactive = bool(sys.stdin and sys.stdin.isatty())
 
@@ -277,6 +284,16 @@ def main():
 
     base = f"pc/{owner}"
     seen, beat, delay = set(), 0.0, 1
+    running, finished = set(), []   # 실행 중인 요청과, 끝나서 결과를 올릴 차례인 요청
+
+    def work(rid, req):   # 오래 걸리는 명령이 연결을 막지 않게 따로 돌린다
+        fn = run_command if req.get("kind") == "cmd" else save_file
+        try:
+            result = fn(fb, owner, key, req, seen, args.commands)
+        except Exception as e:
+            A.log(f"실행하지 못했습니다: {e}")
+            result = {"state": "failed"}
+        finished.append((rid, result))
     name = os.environ.get("COMPUTERNAME") or "내 컴퓨터"
     try:
         while True:
@@ -285,15 +302,20 @@ def main():
                     beat = time.time()
                     fb.db("PUT", f"{base}/status", {"name": name, "seen": A.SV, "commands": bool(args.commands)})
                 for rid, req in (fb.get(f"{base}/requests") or {}).items():
-                    if not isinstance(req, dict) or req.get("state"):
+                    if not isinstance(req, dict) or req.get("state") or rid in running:
                         continue
-                    if req.get("kind") == "cmd":
-                        result = run_command(fb, owner, key, req, seen, args.commands)
-                    elif req.get("kind") == "file":
-                        result = save_file(fb, owner, key, req, seen, args.commands)
-                    else:
-                        result = {"state": handle(fb, owner, key, rid, req, seen, args.site)}
+                    if req.get("kind") in ("cmd", "file"):
+                        running.add(rid)
+                        fb.db("PATCH", f"{base}/requests/{rid}", {"got": A.SV})   # 받았다고 알린다
+                        threading.Thread(target=work, args=(rid, req), daemon=True).start()
+                        continue
+                    result = {"state": handle(fb, owner, key, rid, req, seen, args.site)}
                     fb.db("PATCH", f"{base}/requests/{rid}", {**result, "done": A.SV})
+                while finished:   # 올리다 실패하면 남겨 두었다가 다음에 다시 올린다
+                    rid, result = finished[0]
+                    fb.db("PATCH", f"{base}/requests/{rid}", {**result, "done": A.SV})
+                    finished.pop(0)
+                    running.discard(rid)
                 delay = 1
                 time.sleep(2)
             except (A.ApiError, A.NetError) as e:

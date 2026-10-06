@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import threading
+import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -63,7 +64,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200, f.read(), "application/json; charset=utf-8")
             except OSError:
                 return self.reply(404, b"[]", "application/json; charset=utf-8")
-        if path not in ("/", "/index.html"):
+        if urllib.parse.unquote(path) == "/설명서.pdf":
+            try:
+                with open(os.path.join(BASE_DIR, "설명서.pdf"), "rb") as f:
+                    return self.reply(200, f.read(), "application/pdf")
+            except OSError:
+                return self.reply(404, b"not found", "text/plain; charset=utf-8")
+        if path.rstrip("/") not in ("", "/index.html", "/talk", "/code", "/login", "/setting"):   # 화면은 하나고 주소만 다르다
             return self.reply(404, b"not found", "text/plain; charset=utf-8")
         try:
             with open(INDEX_PATH, "rb") as f:

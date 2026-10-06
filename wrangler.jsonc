@@ -7,6 +7,8 @@
   "assets": {
     "directory": "./",
     "binding": "ASSETS",
+    // /talk, /code, /login, /setting 처럼 파일이 없는 주소는 index.html 을 보여 준다
+    "not_found_handling": "single-page-application",
     // 이 주소만 worker.js 가 처리하고, 나머지는 파일을 그대로 보여 준다
     "run_worker_first": ["/firebase-config.json"]
   },
