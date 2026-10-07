@@ -304,7 +304,21 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .file-msg small { display: block; font-size: 12px; opacity: .7; }
 .photo-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .photo-row .avatar { width: 56px; height: 56px; font-size: 20px; }
-.settings-page { height: 100vh; height: 100dvh; overflow-y: auto; background: var(--bg); }
+.settings-page { position: fixed; top: 0; right: 0; bottom: 0; left: 304px; z-index: 30; overflow-y: auto; background: var(--bg); }   /* 왼쪽 목록은 그대로 보인다 */
+@media (max-width: 820px) { .settings-page { left: 0; } }
+.feed-new textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); color: var(--ink); font: inherit; resize: vertical; }
+.feed-img { display: block; max-width: 100%; max-height: 520px; margin-top: 10px; border-radius: 12px; }
+.feed-text { margin: 10px 0 0; white-space: pre-wrap; }
+.feed-bar { display: flex; align-items: center; gap: 16px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--ink-2); font-size: 13px; }
+.feed-bar span, .feed-like { display: inline-flex; align-items: center; gap: 5px; }
+.feed-like { padding: 4px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+.feed-like:hover { background: var(--chip); }
+.feed-like.on { color: #d6336c; font-weight: 700; }
+.feed-like.on .ic { fill: currentColor; }
+.feed-comment { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; font-size: 13.5px; }
+.feed-comment span { flex: 1; min-width: 0; white-space: pre-wrap; }
+.feed-x { border: 0; background: transparent; color: var(--ink-3); font-size: 16px; line-height: 1; }
+.feed-post input[type=text] { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); color: var(--ink); font: inherit; }
 .settings-head { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .settings-head h2 { margin: 0; font-size: 18px; }
 .settings-body { width: min(640px, 100%); margin: 0 auto; padding: 20px 16px 48px; }
@@ -574,7 +588,8 @@ button.me:hover { background: var(--panel-2); }
     <div class="side-actions">
       <button type="button" class="btn primary" id="new-btn"><span data-icon="plus"></span>방 만들기</button>
       <button type="button" class="btn" id="join-btn"><span data-icon="key"></span>코드로 입장</button>
-      <button type="button" class="btn" id="open-btn" style="grid-column: 1 / -1"><span data-icon="chat"></span>오픈채팅 둘러보기</button>
+      <button type="button" class="btn" id="open-btn"><span data-icon="chat"></span>오픈채팅</button>
+      <button type="button" class="btn" id="feed-btn"><span data-icon="heart"></span>피드</button>
     </div>
     <div class="side-tabs" role="tablist">
       <button type="button" id="tab-chat" role="tab" title="대화방" aria-label="대화방"><span data-icon="chat"></span>대화</button>
@@ -756,6 +771,7 @@ const ICONS = {
   userplus: '<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/>',
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   code: '<path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/>',
+  heart: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21.2l7.8-7.7 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>',
   clip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
   folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
@@ -846,6 +862,8 @@ function userError(message) {
 const S = {
   uid: null, me: null,          // me = { name, kind, username }
   limits: {}, limitWatch: null, // 관리자가 건 제한 { noRoom, mute, banned }
+  config: {}, configWatch: null, // 사이트 설정 { feed }
+  feedStop: null, feedCount: 15, // 피드 구독 끊기 함수, 보여 줄 글 수
   flood: new Map(),             // 방 id -> 도배 금지용 기록
   mine: {},                     // 방 id -> 그 방에서의 내 참가자 id
   raw: new Map(),               // 방 id -> 데이터베이스의 방 정보 그대로
@@ -1003,6 +1021,7 @@ function startSession(uid, profile) {
     if (!S.limits.banned || isAdmin()) return;
     signOut(auth).then(() => setTimeout(() => showAuthError('관리자가 이 계정을 차단했습니다.'), 300));
   }, () => {});
+  S.configWatch = onValue(R('config'), (snap) => { S.config = snap.val() || {}; drawSideButtons(); }, () => {});
   // 내가 들어가 있는 방 목록을 지켜본다
   S.pcWatch = onValue(R('pc', uid, 'status'), (snap) => {
     S.pc = snap.val();
@@ -1041,6 +1060,8 @@ function stopSession() {
   if (S.projectWatch) S.projectWatch();
   if (S.pcWatch) S.pcWatch();
   if (S.limitWatch) S.limitWatch();
+  if (S.configWatch) S.configWatch();
+  stopFeed();
   if (S.roomProjectWatch) S.roomProjectWatch();
   for (const stop of S.watches.values()) stop();
   S.timers.forEach(clearInterval);
@@ -1048,7 +1069,7 @@ function stopSession() {
     uid: null, me: null, mine: {}, raw: new Map(), watches: new Map(), rooms: [], byId: new Map(),
     cur: null, cache: new Map(), msgWatch: null, listWatch: null, timers: [], friends: {}, friendWatch: null,
     projects: {}, roomProject: {}, projectWatch: null, roomProjectWatch: null, pc: null, pcWatch: null,
-    limits: {}, limitWatch: null, flood: new Map(),
+    limits: {}, limitWatch: null, flood: new Map(), config: {}, configWatch: null, feedCount: 15,
   });
   closeModal();
   document.title = 'AI Talk';
@@ -1483,8 +1504,9 @@ function drawAdmin() {
   };
   const search = h('input', { type: 'search', value: admin.q, placeholder: admin.tab === 'users' ? '이름이나 아이디로 찾기' : '방 이름으로 찾기', 'aria-label': '찾기' });
   search.addEventListener('input', () => { admin.q = search.value; fill(); });
-  const tabs = h('div', { class: 'seg' }, [['users', '사용자'], ['rooms', '대화방']].map(([id, label]) =>
+  const tabs = h('div', { class: 'seg' }, [['users', '사용자'], ['rooms', '대화방'], ['site', '사이트 설정']].map(([id, label]) =>
     h('button', { type: 'button', class: admin.tab === id ? 'on' : '', onclick: () => { admin.tab = id; admin.q = ''; drawAdmin(); } }, label)));
+  if (admin.tab === 'site') return showFullPage('관리자', h('div', null, tabs, adminSite()), '/admin');
   fill();
   showFullPage('관리자', h('div', null, tabs, search,
     h('p', { class: 'hint' }, admin.tab === 'users'
@@ -1650,6 +1672,111 @@ function askNick(id, roomName) {   // 들어가기 전에 이 방에서 쓸 닉�
     h('p', { class: 'hint' }, '이 방에서만 이 이름으로 보입니다. 같은 이름이 있으면 뒤에 숫자가 붙어요.'),
     err,
     h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'btn', onclick: closeModal }, '취소'), submit)), nick);
+}
+
+/* ───────────── 피드 (/feed): 글·사진을 올리고 좋아요와 댓글을 단다 ───────────── */
+const FEED_PAGE = 15;
+const feedOn = () => S.config.feed !== false;   // 관리자가 끄지 않았으면 켜져 있다
+function drawSideButtons() {
+  $('#feed-btn').hidden = !feedOn();
+  $('#open-btn').style.gridColumn = feedOn() ? '' : '1 / -1';
+}
+function stopFeed() {
+  if (S.feedStop) S.feedStop();
+  S.feedStop = null;
+}
+function openFeed() {
+  if (!feedOn()) {
+    toast('관리자가 피드를 꺼 두었어요.', 'err');
+    closeSettings();
+    return setPath(PATHS[S.tab], true);
+  }
+  const box = h('div');
+  showFullPage('피드', h('div', null, feedComposer(), box), '/feed');
+  S.feedStop = onValue(query(R('posts'), orderByKey(), limitToLast(S.feedCount)), (snap) => {
+    if (location.pathname !== '/feed') return;
+    drawFeed(box, Object.entries(snap.val() || {}).filter(([, p]) => p && p.uid && p.ts).reverse());
+  }, fail);
+}
+function feedComposer() {
+  const text = h('textarea', { rows: 3, maxlength: 1000, placeholder: '무슨 일이 있었나요?', 'aria-label': '새 글' });
+  const preview = h('img', { class: 'feed-img', hidden: true, alt: '올릴 사진' });
+  const pick = h('input', { type: 'file', accept: 'image/*', hidden: true });
+  const post = h('button', { type: 'submit', class: 'btn primary' }, '올리기');
+  let img = null;
+  const show = () => { preview.hidden = !img; if (img) preview.src = img; };
+  pick.addEventListener('change', async () => {
+    try { img = pick.files[0] ? await shrinkImage(pick.files[0], 1080, 0.8) : null; } catch (err) { img = null; fail(err); }
+    pick.value = '';
+    show();
+  });
+  return h('form', { class: 'admin-item feed-new', onsubmit: async (e) => {
+    e.preventDefault();
+    const body = text.value.trim();
+    if (!body && !img) return;
+    if (S.limits.mute) return toast('관리자가 글쓰기를 막았습니다.', 'err');
+    post.disabled = true;
+    try {
+      await set(push(R('posts')), { uid: S.uid, name: S.me.name, photo: S.me.photo || null, text: body, img, ts: SV });
+      text.value = '';
+      img = null;
+      show();
+    } catch (err) { fail(err); }
+    post.disabled = false;
+  } }, text, preview, pick,
+    h('div', { class: 'form-actions' },
+      h('button', { type: 'button', class: 'btn', onclick: () => pick.click() }, icon('clip'), '사진'), post));
+}
+function drawFeed(box, posts) {
+  // 다시 그려도 쓰던 댓글이 지워지지 않게 옮겨 둔다
+  const drafts = new Map([...box.querySelectorAll('input[data-post]')].map((el) => [el.dataset.post, el.value]));
+  const active = document.activeElement;
+  const focused = active && box.contains(active) ? active.dataset.post : null;
+  const nodes = posts.map(([id, p]) => postNode(id, p, drafts.get(id) || ''));
+  if (!nodes.length) nodes.push(h('p', { class: 'hint' }, '아직 글이 없어요. 첫 글을 올려 보세요.'));
+  if (posts.length >= S.feedCount) {
+    nodes.push(h('button', { type: 'button', class: 'btn', style: 'width:100%;margin-top:10px', onclick: () => { S.feedCount += FEED_PAGE; stopFeed(); openFeed(); } }, '더 보기'));
+  }
+  box.replaceChildren(...nodes);
+  const again = focused ? box.querySelector(`input[data-post="${focused}"]`) : null;
+  if (again) again.focus();
+}
+function postNode(id, p, draft) {
+  const likes = Object.keys(p.likes || {});
+  const liked = likes.includes(S.uid);
+  const comments = Object.entries(p.comments || {}).filter(([, c]) => c && c.text);
+  const blocked = () => (S.limits.mute ? (toast('관리자가 글쓰기를 막았습니다.', 'err'), true) : false);
+  const input = h('input', { type: 'text', maxlength: 300, placeholder: '댓글 달기', 'aria-label': '댓글 달기', 'data-post': id, value: draft });
+  return h('article', { class: 'admin-item feed-post' },
+    h('div', { class: 'admin-who' }, avatar(p.uid, String(p.name || '?'), 'human', p.photo),
+      h('div', { style: 'flex:1;min-width:0' }, h('strong', null, String(p.name || '?')), h('small', null, fullFmt.format(Number(p.ts) || 0))),
+      p.uid === S.uid || isAdmin() ? h('button', { type: 'button', class: 'icon-btn', title: '글 삭제', 'aria-label': '글 삭제', onclick: async () => {
+        if (await confirmBox('글 삭제', '이 글을 삭제할까요? 좋아요와 댓글도 함께 지워집니다.', '삭제', true)) set(R('posts', id), null).catch(fail);
+      } }, icon('trash')) : null),
+    p.text ? h('p', { class: 'feed-text' }, String(p.text)) : null,
+    isPhoto(p.img) ? h('img', { class: 'feed-img', src: p.img, alt: '올린 사진' }) : null,
+    h('div', { class: 'feed-bar' },
+      h('button', { type: 'button', class: 'feed-like' + (liked ? ' on' : ''), 'aria-pressed': String(liked),
+        onclick: () => set(R('posts', id, 'likes', S.uid), liked ? null : true).catch(fail) }, icon('heart'), `좋아요 ${likes.length}`),
+      h('span', null, icon('chat'), `댓글 ${comments.length}`)),
+    comments.map(([cid, c]) => h('div', { class: 'feed-comment' },
+      h('strong', null, String(c.name || '?')), h('span', null, String(c.text)),
+      c.uid === S.uid || isAdmin() ? h('button', { type: 'button', class: 'feed-x', title: '댓글 삭제', 'aria-label': '댓글 삭제',
+        onclick: () => set(R('posts', id, 'comments', cid), null).catch(fail) }, '×') : null)),
+    h('form', { class: 'name-row', style: 'margin-top:8px', onsubmit: (e) => {
+      e.preventDefault();
+      const body = input.value.trim();
+      if (!body || blocked()) return;
+      input.value = '';
+      set(push(R('posts', id, 'comments')), { uid: S.uid, name: S.me.name, text: body, ts: SV }).catch(fail);
+    } }, input, h('button', { type: 'submit', class: 'btn' }, '달기')));
+}
+function adminSite() {   // 관리자: 사이트 전체에 적용되는 설정
+  const on = feedOn();
+  return h('div', { class: 'admin-item' }, h('div', { class: 'row' },
+    h('div', null, h('strong', null, '피드'), h('small', null, '글·사진을 올리고 좋아요와 댓글을 다는 곳(/feed)입니다. 끄면 모두에게서 버튼이 사라지고 들어갈 수 없습니다. 올린 글은 지워지지 않습니다.')),
+    h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(on), 'aria-label': '피드',
+      onclick: () => set(R('config', 'feed'), !on).then(() => { toast(on ? '피드를 껐어요.' : '피드를 켰어요.'); drawAdmin(); }, fail) })));
 }
 
 /* ───────────── 친구 ───────────── */
@@ -2197,7 +2324,7 @@ function setTab(tab, nav = true) {
   S.tab = tab;
   store.set('tab', tab);
   renderRoomList();
-  if (nav) setPath(PATHS[tab]);
+  if (nav) { closeSettings(); setPath(PATHS[tab]); }
 }
 
 /* ───────────── 프로젝트 (방을 모아 두는 폴더, 나만 보임) ───────────── */
@@ -2237,14 +2364,15 @@ function setPath(path, replace) {
   try { history[replace ? 'replaceState' : 'pushState'](null, '', path); } catch (_) { /* 주소를 못 바꿔도 화면은 그대로 쓴다 */ }
 }
 function closeSettings() {
+  stopFeed();
   $('#settings').hidden = true;
   $('#settings-body').replaceChildren();
   $('#main').hidden = false;
 }
 function showFullPage(title, body, path) {   // 설정·관리자처럼 따로 된 화면
   $('#page-title').textContent = title;
+  if (path !== '/feed' || S.feedStop) stopFeed();
   $('#settings-body').replaceChildren(body);
-  $('#main').hidden = true;
   $('#settings').hidden = false;
   setPath(path);
 }
@@ -2255,6 +2383,7 @@ function showPage() {   // 지금 주소에 맞는 화면을 보여 준다
   if (path === '/setting') return openSettings();
   if (path === '/admin') return openAdmin();
   if (path === '/openchat') return openOpenchat();
+  if (path === '/feed') return openFeed();
   closeSettings();
   if (path === '/talk' || path === '/code') {
     S.tab = path === '/code' ? 'code' : 'chat';
@@ -2375,7 +2504,8 @@ function openRoom(id) {
   S.cur = id;
   const opened = S.byId.get(id);
   if (opened) S.tab = opened.coding ? 'code' : 'chat';
-  if ($('#settings').hidden) setPath(PATHS[S.tab], true);
+  closeSettings();   // 설정·피드 같은 화면이 열려 있었으면 닫는다
+  setPath(PATHS[S.tab], true);
   document.body.classList.add('in-room');
   input.value = cacheOf(id).draft;
   autosize();
@@ -3208,7 +3338,7 @@ function manual() {
         [h('strong', null, 'ai_agent.py'), ' 파일이 있어야 합니다. ', h('a', { href: REPO_URL, target: '_blank', rel: 'noopener noreferrer' }, 'GitHub 에서 받기')],
       ]],
       ['invite', '방을 만들고 명령을 복사해요', [
-        '[방 만들기]로 방을 만듭니다. 단톡방은 초대코드가 있어야 들어오고, 오픈채팅방은 [오픈채팅 둘러보기]에서 누구나 닉네임을 정하고 들어옵니다.',
+        '[방 만들기]로 방을 만듭니다. 단톡방은 초대코드가 있어야 들어오고, 오픈채팅방은 [오픈채팅]에서 누구나 닉네임을 정하고 들어옵니다.',
         '오른쪽 [대화방 정보 → AI 초대하기]에 나오는 명령을 복사합니다.',
       ]],
       ['cmd', 'CMD 창에 붙여 넣어요', [
@@ -3321,6 +3451,36 @@ function manual() {
         '방을 만들 때 [함께 초대할 친구]에서 미리 골라도 됩니다.',
         '친구 목록의 + 버튼은 그 친구를 초대할 방을 고르고, 말풍선 버튼은 1:1 대화를 엽니다.',
         'AI 친구는 그 AI의 CMD 창이 켜져 있어야 대답합니다.',
+      ]],
+    ]],
+    more: ['오픈채팅·피드·관리', [
+      ['chat', '단톡방과 오픈채팅방', [
+        '단톡방은 초대코드가 있거나 친구가 초대해 줘야 들어올 수 있습니다. 목록에 나오지 않습니다.',
+        '오픈채팅방은 왼쪽의 [오픈채팅]에 목록으로 나오고, 로그인한 누구나 들어옵니다.',
+        '오픈채팅방에 들어갈 때는 그 방에서만 쓸 닉네임을 정합니다.',
+        '방장은 대화방 정보의 [오픈채팅방으로 열기]로 언제든 바꿀 수 있습니다.',
+      ]],
+      ['invite', '초대코드를 직접 정해요', [
+        '방장은 대화방 정보의 [초대코드 직접 정하기]로 영어·숫자·한글 코드를 하나 더 만들 수 있습니다.',
+        '원래 8자리 코드도 그대로 쓸 수 있고, 초대코드 칸에 두 코드가 번갈아 보입니다.',
+        '쉬운 코드는 모르는 사람도 맞힐 수 있으니 조심하세요.',
+      ]],
+      ['result', '피드: 글과 사진을 올려요', [
+        '왼쪽의 [피드]에서 글과 사진을 올리고, 다른 사람의 글에 좋아요와 댓글을 달 수 있습니다.',
+        '내가 올린 글과 댓글은 내가 지울 수 있습니다.',
+        '피드는 로그인한 모든 사람에게 보입니다. 관리자가 꺼 두면 버튼이 보이지 않습니다.',
+      ]],
+      ['safe', '도배 금지', [
+        '방장은 대화방 정보에서 [도배 금지]를 켜고 끕니다. 새로 만든 방은 켜져 있습니다.',
+        '8초에 5번 넘게 보내거나 같은 말을 4번 되풀이하면 10초 동안 보낼 수 없습니다.',
+        '5분 안에 경고를 3번 받으면 그 방에서 차단되고 다시 들어올 수 없습니다.',
+        '방장은 대화방 정보의 [차단된 사람]에서 풀어 줄 수 있습니다.',
+      ]],
+      ['tips', '관리자', [
+        '사이트를 운영하는 사람이 Cloudflare 의 ADMIN_ID 에 자기 아이디를 적으면 관리자가 됩니다.',
+        '관리자는 설정 → [관리자 페이지]에서 사람마다 방 만들기 금지 · 대화 금지 · 사이트 추방을 켜고 끕니다.',
+        '[자세히 보기]로 그 사람이 쓴 글을 보고, 방에서 내보내거나 방을 삭제할 수 있습니다.',
+        '[사이트 설정]에서 피드를 켜고 끕니다.',
       ]],
     ]],
   };
@@ -3499,6 +3659,7 @@ $('#input').addEventListener('paste', (e) => {   // 복사한 사진을 붙여 �
 });
 $('#me-btn').addEventListener('click', openSettings);
 $('#open-btn').addEventListener('click', openOpenchat);
+$('#feed-btn').addEventListener('click', openFeed);
 $('#settings-back').addEventListener('click', () => { closeSettings(); setPath(PATHS[S.tab]); });
 $('#tab-chat').addEventListener('click', () => setTab('chat'));
 $('#tab-code').addEventListener('click', () => setTab('code'));

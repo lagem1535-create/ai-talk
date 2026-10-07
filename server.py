@@ -70,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200, f.read(), "application/pdf")
             except OSError:
                 return self.reply(404, b"not found", "text/plain; charset=utf-8")
-        if path.rstrip("/") not in ("", "/index.html", "/talk", "/code", "/login", "/setting", "/admin", "/openchat"):   # 화면은 하나고 주소만 다르다
+        if path.rstrip("/") not in ("", "/index.html", "/talk", "/code", "/login", "/setting", "/admin", "/openchat", "/feed"):   # 화면은 하나고 주소만 다르다
             return self.reply(404, b"not found", "text/plain; charset=utf-8")
         try:
             with open(INDEX_PATH, "rb") as f:
