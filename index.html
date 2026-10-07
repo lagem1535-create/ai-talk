@@ -312,6 +312,23 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .feed-new textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); color: var(--ink); font: inherit; resize: vertical; }
 .feed-img { display: block; max-width: 100%; max-height: 520px; margin-top: 10px; border-radius: 12px; }
 .feed-text { margin: 10px 0 0; white-space: pre-wrap; }
+.page-acts { margin-left: auto; }
+.feed-imgs.many { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.feed-imgs.many .feed-img { width: 100%; height: 220px; object-fit: cover; }
+.feed-imgs .feed-img { cursor: zoom-in; }
+.feed-down { margin-top: 8px; }
+.feed-attach { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.feed-thumb { position: relative; }
+.feed-thumb img { display: block; width: 84px; height: 84px; object-fit: cover; border-radius: 10px; }
+.feed-thumb button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: var(--ink); color: var(--panel); line-height: 1; }
+.feed-file { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 10px; border-radius: 10px; background: var(--chip); font-size: 13px; }
+.feed-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed-file button { border: 0; background: transparent; color: var(--ink-3); font-size: 16px; line-height: 1; }
+.log-group { overflow: hidden; }
+.log-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -10px -12px 0; padding: 9px 12px;
+  background: color-mix(in srgb, hsl(var(--h) 70% 50%) 16%, var(--panel)); color: color-mix(in srgb, hsl(var(--h) 70% 45%) 75%, var(--ink)); }
+.log-head span { font-size: 12px; font-weight: 600; }
+.log-head + .admin-msg { border-top: 0; }
 .feed-bar { display: flex; align-items: center; gap: 16px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--ink-2); font-size: 13px; }
 .feed-bar span, .feed-like { display: inline-flex; align-items: center; gap: 5px; }
 .feed-like { padding: 4px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; }
@@ -678,6 +695,7 @@ button.me:hover { background: var(--panel-2); }
   <header class="settings-head">
     <button type="button" class="icon-btn" id="settings-back" title="돌아가기" aria-label="돌아가기"><span data-icon="back"></span></button>
     <h2 id="page-title">설정</h2>
+    <div id="page-acts" class="page-acts"></div>
   </header>
   <div id="settings-body" class="settings-body"></div>
 </section>
@@ -1420,9 +1438,9 @@ async function sendFiles(list) {
   }
   if (sent) scrollBottom();
 }
-async function openFile(roomId, f) {   // 올라온 파일을 받아서 사진은 크게 보여 주고, 나머지는 내려받는다
+async function openFile(roomId, f, base = 'files') {   // base: 대화방 파일(files) 또는 Board 글의 파일(postFiles)   // 올라온 파일을 받아서 사진은 크게 보여 주고, 나머지는 내려받는다
   try {
-    const item = (await get(R('files', roomId, f.id))).val();
+    const item = (await get(R(base, roomId, f.id))).val();
     if (!item || typeof item.data !== 'string' || !item.data.startsWith('data:')) throw userError('파일을 찾을 수 없어요.');
     if (isPhoto(item.data)) {
       return openModal(f.name, h('div', null, h('img', { src: item.data, alt: f.name, style: 'display:block;max-width:100%;max-height:70vh;margin:0 auto;border-radius:10px' }),
@@ -1545,31 +1563,74 @@ function adminUsers(q) {
               onclick: () => setLimit(uid, u, key, label, note, !lim[key]) }, lim[key] ? `${label} 중` : label))));
     });
 }
-// 자세히 보기: 그 사람이 들어가 있는(있었던) 방마다 쓴 글을 최근 것부터 보여 준다
-const LOG_PAGE = 300;   // 방마다 최근 메시지 몇 개 안에서 찾을지
+// 자세히 보기: 그 사람이 방에서 쓴 글과 Board 에 올린 글·댓글을 방별 또는 날짜별로 보여 준다
+const LOG_PAGE = 300;    // 방마다 최근 메시지 몇 개 안에서 찾을지
+const LOG_POSTS = 200;   // Board 의 최근 글 몇 개 안에서 찾을지
+const logDay = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'full' });
+const logTime = new Intl.DateTimeFormat('ko-KR', { timeStyle: 'short' });
+const userLog = { mode: 'room' };   // room: 방별로 보기 / day: 날짜별로 보기
 async function openUserLog(uid, u) {
   const who = u.name || u.username || uid;
   const title = `${who} 님이 쓴 글`;
   openModal(title, h('p', { class: 'hint' }, '불러오는 중…'), null, true);
-  const blocks = [];
-  let total = 0;
+  let items = [];   // { ts, where, text, postId, commentId }
   for (const [id, r] of Object.entries(admin.rooms)) {
     const mids = Object.entries((r && r.members) || {}).filter(([, m]) => m && m.uid === uid).map(([mid]) => mid);
     if (!mids.length) continue;
     const snap = await get(query(R('messages', id), orderByKey(), limitToLast(LOG_PAGE)));
-    const list = Object.values(snap.val() || {}).filter((m) => m && mids.includes(m.m)).reverse();
-    if (!list.length) continue;
-    total += list.length;
-    blocks.push(h('div', { class: 'admin-item' },
-      h('strong', null, (r.meta && r.meta.name) || '1:1 대화'), h('small', { class: 'admin-count' }, `${list.length}개`),
-      list.map((m) => h('div', { class: 'admin-msg' },
-        h('time', null, fullFmt.format(Number(m.ts) || 0)),
-        h('p', null, String(m.text || '') || (m.file ? `(${m.file.thumb ? '사진' : '파일'}) ${m.file.name || ''}` : ''))))));
+    const where = (r.meta && r.meta.name) || '1:1 대화';
+    for (const m of Object.values(snap.val() || {})) {
+      if (!m || !mids.includes(m.m)) continue;
+      items.push({ ts: Number(m.ts) || 0, where, text: String(m.text || '') || (m.file ? `(${m.file.thumb ? '사진' : '파일'}) ${m.file.name || ''}` : '') });
+    }
+  }
+  const posts = (await get(query(R('posts'), orderByKey(), limitToLast(LOG_POSTS)))).val() || {};
+  for (const [id, p] of Object.entries(posts)) {
+    if (!p) continue;
+    if (p.uid === uid) {
+      const nImg = postImages(p).length;
+      const nFile = postFiles(p).length;
+      items.push({ ts: Number(p.ts) || 0, where: 'Board', postId: id,
+        text: [p.title ? `[${p.title}]` : '', String(p.text || ''), nImg ? `(사진 ${nImg}장)` : '', nFile ? `(파일 ${nFile}개)` : ''].filter(Boolean).join('\n') });
+    }
+    for (const [cid, c] of Object.entries(p.comments || {})) {
+      if (c && c.uid === uid) items.push({ ts: Number(c.ts) || 0, where: 'Board 댓글', postId: id, commentId: cid, text: String(c.text || '') });
+    }
   }
   if ($('#modal').hidden || $('#modal-title').textContent !== title) return;   // 기다리는 사이에 창을 닫았다
-  openModal(title, h('div', null,
-    h('p', { class: 'hint' }, `방마다 최근 메시지 ${LOG_PAGE}개 안에서 찾았어요. 모두 ${total}개, 최근 것부터 보여 줍니다.`),
-    blocks.length ? blocks : h('p', null, '쓴 글이 없어요.')), null, true);
+  items.sort((a, b) => b.ts - a.ts);
+  const remove = async (it) => {   // 관리자는 Board 의 글과 댓글을 여기서 바로 지울 수 있다
+    if (!(await confirmBox(it.commentId ? '댓글 삭제' : '글 삭제', '삭제할까요? 되돌릴 수 없습니다.', '삭제', true))) return draw();
+    try {
+      await (it.commentId ? set(R('posts', it.postId, 'comments', it.commentId), null) : deletePost(it.postId));
+      items = items.filter((x) => (it.commentId ? x !== it : x.postId !== it.postId));
+      toast('삭제했어요.');
+    } catch (err) { fail(err); }
+    draw();
+  };
+  const draw = () => {
+    const groups = new Map();
+    for (const it of items) {
+      const key = userLog.mode === 'room' ? it.where : logDay.format(it.ts);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    }
+    openModal(title, h('div', null,
+      h('div', { class: 'seg' }, [['room', '방별로 보기'], ['day', '날짜별로 보기']].map(([id, label]) =>
+        h('button', { type: 'button', class: userLog.mode === id ? 'on' : '', onclick: () => { userLog.mode = id; draw(); } }, label))),
+      h('p', { class: 'hint' }, `방마다 최근 메시지 ${LOG_PAGE}개와 Board 의 최근 글 ${LOG_POSTS}개 안에서 찾았어요. 모두 ${items.length}개, 최근 것부터 보여 줍니다.`),
+      groups.size ? [...groups].map(([key, list]) => {
+        let hue = 0;
+        for (const ch of key) hue = (hue * 31 + ch.codePointAt(0)) % 360;
+        const head = h('div', { class: 'log-head' }, h('strong', null, key), h('span', null, `${list.length}개`));
+        head.style.setProperty('--h', String(hue));
+        return h('div', { class: 'admin-item log-group' }, head, list.map((it) => h('div', { class: 'admin-msg' },
+          h('time', null, userLog.mode === 'room' ? fullFmt.format(it.ts) : `${logTime.format(it.ts)} · ${it.where}`),
+          h('p', null, it.text),
+          it.postId ? h('button', { type: 'button', class: 'btn small danger', style: 'margin-top:4px', onclick: () => remove(it) }, icon('trash'), it.commentId ? '댓글 삭제' : '글 삭제') : null)));
+      }) : h('p', null, '쓴 글이 없어요.')), null, true);
+  };
+  draw();
 }
 async function setLimit(uid, u, key, label, note, on) {
   const who = u.name || u.username || uid;
@@ -1706,44 +1767,89 @@ function openFeed() {
     closeSettings();
     return setPath(PATHS[S.tab], true);
   }
-  const box = h('div');
-  showFullPage('Board', h('div', null, feedComposer(), box), '/board');
+  const box = h('div', null, h('p', { class: 'hint' }, '불러오는 중…'));
+  showFullPage('Board', box, '/board');
+  $('#page-acts').replaceChildren(h('button', { type: 'button', class: 'btn primary small', title: '새 글 쓰기', onclick: openWrite }, icon('plus'), '글쓰기'));
   S.feedStop = onValue(query(R('posts'), orderByKey(), limitToLast(S.feedCount)), (snap) => {
     if (location.pathname !== '/board') return;
     drawFeed(box, Object.entries(snap.val() || {}).filter(([, p]) => p && p.uid && p.ts).reverse());
   }, fail);
 }
+function openWrite() {   // 글을 등록하는 화면 (/write)
+  if (!feedOn()) return openFeed();
+  showFullPage('Board 글쓰기', feedComposer(), '/write');
+}
+// 글 하나에 붙일 수 있는 사진·파일 수 (데이터베이스에 넣으므로 작게 잡는다)
+const MAX_POST_IMAGES = 10;
+const MAX_POST_FILES = 10;
+const postImages = (p) => [p.img, ...Object.values(p.imgs || {})].filter(isPhoto);
+const postFiles = (p) => Object.values(p.files || {}).filter((f) => f && /^[\w-]+$/.test(String(f.id)));
 function feedComposer() {
   const title = h('input', { type: 'text', maxlength: 60, placeholder: '제목', 'aria-label': '제목' });
-  const text = h('textarea', { rows: 3, maxlength: 1000, placeholder: '내용', 'aria-label': '내용' });
-  const preview = h('img', { class: 'feed-img', hidden: true, alt: '올릴 사진' });
-  const pick = h('input', { type: 'file', accept: 'image/*', hidden: true });
-  const post = h('button', { type: 'submit', class: 'btn primary' }, '올리기');
-  let img = null;
-  const show = () => { preview.hidden = !img; if (img) preview.src = img; };
-  pick.addEventListener('change', async () => {
-    try { img = pick.files[0] ? await shrinkImage(pick.files[0], 1080, 0.8) : null; } catch (err) { img = null; fail(err); }
-    pick.value = '';
-    show();
-  });
+  const text = h('textarea', { rows: 6, maxlength: 2000, placeholder: '내용', 'aria-label': '내용' });
+  const list = h('div', { class: 'feed-attach' });
+  const post = h('button', { type: 'submit', class: 'btn primary' }, '등록');
+  const imgs = [];    // 줄여 둔 사진
+  const files = [];   // 사진이 아닌 파일
+  const show = () => list.replaceChildren(
+    ...imgs.map((src, i) => h('span', { class: 'feed-thumb' }, h('img', { src, alt: '' }),
+      h('button', { type: 'button', 'aria-label': '사진 빼기', onclick: () => { imgs.splice(i, 1); show(); } }, '×'))),
+    ...files.map((f, i) => h('span', { class: 'feed-file' }, icon('file'), h('span', null, f.webkitRelativePath || f.name),
+      h('button', { type: 'button', 'aria-label': '파일 빼기', onclick: () => { files.splice(i, 1); show(); } }, '×'))));
+  const add = async (picked) => {
+    let skipped = 0;
+    for (const f of picked) {
+      if (/^image\/(png|jpeg|webp|gif|bmp)$/.test(f.type)) {
+        if (imgs.length >= MAX_POST_IMAGES) { skipped += 1; continue; }
+        try { imgs.push(await shrinkImage(f, 960, 0.78)); } catch (err) { skipped += 1; }
+      } else if (f.size > MAX_FILE || files.length >= MAX_POST_FILES) {
+        skipped += 1;
+      } else {
+        files.push(f);
+      }
+      show();
+    }
+    if (skipped) toast(`${skipped}개는 넣지 못했어요. (사진 ${MAX_POST_IMAGES}장, 파일 ${MAX_POST_FILES}개, 파일 하나에 3MB까지)`, 'err');
+  };
+  const picker = (attrs) => {
+    const el = h('input', { type: 'file', multiple: true, hidden: true, ...attrs });
+    el.addEventListener('change', () => { const picked = [...el.files]; el.value = ''; add(picked); });
+    return el;
+  };
+  const pick = picker({});
+  const folder = picker({ webkitdirectory: true });
   return h('form', { class: 'admin-item feed-new', onsubmit: async (e) => {
     e.preventDefault();
-    const body = text.value.trim();
     const head = title.value.trim();
-    if (!head && !body && !img) return;
+    const body = text.value.trim();
+    if (!head && !body && !imgs.length && !files.length) return toast('제목이나 내용을 적어 주세요.', 'err');
     if (S.limits.mute) return toast('관리자가 글쓰기를 막았습니다.', 'err');
     post.disabled = true;
+    post.textContent = '올리는 중…';
     try {
-      await set(push(R('posts')), { uid: S.uid, name: S.me.name, photo: S.me.photo || null, title: head, text: body, img, ts: SV });
-      title.value = '';
-      text.value = '';
-      img = null;
-      show();
+      const id = push(R('posts')).key;
+      const meta = [];
+      for (const f of files) {   // 파일 내용은 따로 넣고, 글에는 이름만 적는다
+        const fid = push(R('postFiles', id)).key;
+        const name = (f.webkitRelativePath || f.name).slice(0, 200);
+        await set(R('postFiles', id, fid), { name, type: f.type || 'application/octet-stream', size: f.size, data: await readAs(f, 'readAsDataURL') });
+        meta.push({ id: fid, name, size: f.size });
+      }
+      await set(R('posts', id), { uid: S.uid, name: S.me.name, photo: S.me.photo || null, title: head, text: body,
+        imgs: imgs.length ? imgs : null, files: meta.length ? meta : null, ts: SV });
+      toast('글을 올렸어요.');
+      return openFeed();
     } catch (err) { fail(err); }
     post.disabled = false;
-  } }, title, text, preview, pick,
+    post.textContent = '등록';
+  } }, title, text, list, pick, folder,
     h('div', { class: 'form-actions' },
-      h('button', { type: 'button', class: 'btn', onclick: () => pick.click() }, icon('clip'), '사진'), post));
+      h('button', { type: 'button', class: 'btn', onclick: () => pick.click() }, icon('clip'), '사진·파일'),
+      h('button', { type: 'button', class: 'btn', onclick: () => folder.click() }, icon('folder'), '폴더'),
+      h('button', { type: 'button', class: 'btn', onclick: openFeed }, '취소'), post));
+}
+function deletePost(id) {
+  return update(R(), { [`posts/${id}`]: null, [`postFiles/${id}`]: null });
 }
 function drawFeed(box, posts) {
   // 다시 그려도 쓰던 댓글이 지워지지 않게 옮겨 둔다
@@ -1751,7 +1857,7 @@ function drawFeed(box, posts) {
   const active = document.activeElement;
   const focused = active && box.contains(active) ? active.dataset.post : null;
   const nodes = posts.map(([id, p]) => postNode(id, p, drafts.get(id) || ''));
-  if (!nodes.length) nodes.push(h('p', { class: 'hint' }, '아직 글이 없어요. 첫 글을 올려 보세요.'));
+  if (!nodes.length) nodes.push(h('p', { class: 'hint' }, '아직 글이 없어요. 오른쪽 위의 [글쓰기]로 첫 글을 올려 보세요.'));
   if (posts.length >= S.feedCount) {
     nodes.push(h('button', { type: 'button', class: 'btn', style: 'width:100%;margin-top:10px', onclick: () => { S.feedCount += FEED_PAGE; stopFeed(); openFeed(); } }, '더 보기'));
   }
@@ -1763,17 +1869,23 @@ function postNode(id, p, draft) {
   const likes = Object.keys(p.likes || {});
   const liked = likes.includes(S.uid);
   const comments = Object.entries(p.comments || {}).filter(([, c]) => c && c.text);
+  const imgs = postImages(p);
+  const files = postFiles(p);
   const blocked = () => (S.limits.mute ? (toast('관리자가 글쓰기를 막았습니다.', 'err'), true) : false);
   const input = h('input', { type: 'text', maxlength: 300, placeholder: '댓글 달기', 'aria-label': '댓글 달기', 'data-post': id, value: draft });
   return h('article', { class: 'admin-item feed-post' },
     h('div', { class: 'admin-who' }, avatar(p.uid, String(p.name || '?'), 'human', p.photo),
       h('div', { style: 'flex:1;min-width:0' }, h('strong', null, String(p.name || '?')), h('small', null, fullFmt.format(Number(p.ts) || 0))),
       p.uid === S.uid || isAdmin() ? h('button', { type: 'button', class: 'icon-btn', title: '글 삭제', 'aria-label': '글 삭제', onclick: async () => {
-        if (await confirmBox('글 삭제', '이 글을 삭제할까요? 좋아요와 댓글도 함께 지워집니다.', '삭제', true)) set(R('posts', id), null).catch(fail);
+        if (await confirmBox('글 삭제', '이 글을 삭제할까요? 좋아요와 댓글, 올린 파일도 함께 지워집니다.', '삭제', true)) deletePost(id).catch(fail);
       } }, icon('trash')) : null),
     p.title ? h('h3', { class: 'feed-title' }, String(p.title)) : null,
     p.text ? h('p', { class: 'feed-text' }, String(p.text)) : null,
-    isPhoto(p.img) ? h('img', { class: 'feed-img', src: p.img, alt: '올린 사진' }) : null,
+    imgs.length ? h('div', { class: 'feed-imgs' + (imgs.length > 1 ? ' many' : '') }, imgs.map((src) =>
+      h('img', { class: 'feed-img', src, alt: '올린 사진', title: '누르면 크게 보기', onclick: () => openModal('사진',
+        h('img', { src, alt: '올린 사진', style: 'display:block;max-width:100%;max-height:74vh;margin:0 auto;border-radius:10px' }), null, true) }))) : null,
+    files.map((f) => h('button', { type: 'button', class: 'file-msg feed-down', title: '누르면 내려받기', onclick: () => openFile(id, f, 'postFiles') },
+      icon('file'), h('span', null, String(f.name || '파일'), h('small', null, fileSize(Number(f.size) || 0))))),
     h('div', { class: 'feed-bar' },
       h('button', { type: 'button', class: 'feed-like' + (liked ? ' on' : ''), 'aria-pressed': String(liked),
         onclick: () => set(R('posts', id, 'likes', S.uid), liked ? null : true).catch(fail) }, icon('heart'), `좋아요 ${likes.length}`),
@@ -2390,6 +2502,7 @@ function closeSettings() {
 }
 function showFullPage(title, body, path) {   // 설정·관리자처럼 따로 된 화면
   $('#page-title').textContent = title;
+  $('#page-acts').replaceChildren();
   if (path !== '/board' || S.feedStop) stopFeed();
   $('#settings-body').replaceChildren(body);
   $('#settings').hidden = false;
@@ -2403,6 +2516,7 @@ function showPage() {   // 지금 주소에 맞는 화면을 보여 준다
   if (path === '/admin') return openAdmin();
   if (path === '/openchat') return openOpenchat();
   if (path === '/board' || path === '/feed') return openFeed();   // /feed 는 예전 주소
+  if (path === '/write') return openWrite();
   closeSettings();
   if (path === '/talk' || path === '/code') {
     S.tab = path === '/code' ? 'code' : 'chat';
@@ -3485,7 +3599,9 @@ function manual() {
         '쉬운 코드는 모르는 사람도 맞힐 수 있으니 조심하세요.',
       ]],
       ['result', 'Board: 글과 사진을 올려요', [
-        '왼쪽의 [Board]에서 글과 사진을 올리고, 다른 사람의 글에 좋아요와 댓글을 달 수 있습니다.',
+        '왼쪽의 [Board]를 열고 오른쪽 위의 [글쓰기]를 누르면 글을 등록하는 화면이 나옵니다.',
+        '제목과 내용을 적고, 사진·파일이나 폴더를 붙일 수 있습니다. (사진 10장, 파일 10개, 파일 하나에 3MB까지)',
+        '다른 사람의 글에 좋아요와 댓글을 달 수 있습니다. 사진은 누르면 크게 보이고, 파일은 누르면 내려받습니다.',
         '내가 올린 글과 댓글은 내가 지울 수 있습니다.',
         'Board는 로그인한 모든 사람에게 보입니다. 관리자가 꺼 두면 버튼이 보이지 않습니다.',
       ]],
@@ -3498,7 +3614,8 @@ function manual() {
       ['tips', '관리자', [
         '사이트를 운영하는 사람이 Cloudflare 의 ADMIN_ID 에 자기 아이디를 적으면 관리자가 됩니다.',
         '관리자는 설정 → [관리자 페이지]에서 사람마다 방 만들기 금지 · 대화 금지 · 사이트 추방을 켜고 끕니다.',
-        '[자세히 보기]로 그 사람이 쓴 글을 보고, 방에서 내보내거나 방을 삭제할 수 있습니다.',
+        '[자세히 보기]로 그 사람이 방과 Board 에 쓴 글을 방별·날짜별로 봅니다. Board 의 글과 댓글은 관리자가 모두 지울 수 있습니다.',
+        '대화방 탭에서 참가자를 내보내거나 방을 삭제할 수 있습니다.',
         '[사이트 설정]에서 Board를 켜고 끕니다.',
       ]],
     ]],
@@ -3680,7 +3797,11 @@ $('#me-btn').addEventListener('click', openSettings);
 $('#open-btn').addEventListener('click', openOpenchat);
 $('#feed-btn').addEventListener('click', openFeed);
 $('#admin-btn').addEventListener('click', openAdmin);
-$('#settings-back').addEventListener('click', () => { closeSettings(); setPath(PATHS[S.tab]); });
+$('#settings-back').addEventListener('click', () => {
+  if (location.pathname === '/write') return openFeed();   // 글쓰기에서는 Board 로 돌아간다
+  closeSettings();
+  setPath(PATHS[S.tab]);
+});
 $('#tab-chat').addEventListener('click', () => setTab('chat'));
 $('#tab-code').addEventListener('click', () => setTab('code'));
 $('#project-add').addEventListener('click', () => openProject());
