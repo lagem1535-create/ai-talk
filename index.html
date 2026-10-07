@@ -308,6 +308,13 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .settings-head { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .settings-head h2 { margin: 0; font-size: 18px; }
 .settings-body { width: min(640px, 100%); margin: 0 auto; padding: 20px 16px 48px; }
+.admin-item { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.admin-who { display: flex; align-items: center; gap: 10px; }
+.admin-who small, .admin-room small { display: block; color: var(--ink-3); font-size: 12px; }
+.admin-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.admin-room { display: block; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.admin-members { margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+.settings-body input[type=search] { width: 100%; margin: 8px 0 2px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); font: inherit; }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .pick { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 13px; font-weight: 600; }
 .pick.on { border-color: var(--ink); background: var(--panel-2); }
@@ -638,7 +645,7 @@ button.me:hover { background: var(--panel-2); }
 <section id="settings" class="settings-page" hidden>
   <header class="settings-head">
     <button type="button" class="icon-btn" id="settings-back" title="돌아가기" aria-label="돌아가기"><span data-icon="back"></span></button>
-    <h2>설정</h2>
+    <h2 id="page-title">설정</h2>
   </header>
   <div id="settings-body" class="settings-body"></div>
 </section>
@@ -680,6 +687,9 @@ async function loadConfig() {
   throw new Error('firebase-config.json 없음');
 }
 const firebaseConfig = await loadConfig();
+// 관리자 아이디 (Cloudflare 의 ADMIN_ID). 화면을 보여 줄지 정할 때만 쓴다.
+const ADMIN_IDS = String(firebaseConfig.adminId || '').toLowerCase().split(/[\s,]+/).map((x) => x.replace(/^@/, '')).filter(Boolean);
+delete firebaseConfig.adminId;
 const ROOT = 'aitalk';              // 이 앱의 데이터는 모두 이 아래에만 저장한다 (기존 users 등은 건드리지 않음)
 const EMAIL_DOMAIN = 'aitalk.local';  // 아이디로 로그인할 수 있게 아이디@aitalk.local 을 계정 이메일로 쓴다
 const ONLINE_MS = 45000;            // 이 시간 안에 접속 신호가 있었으면 '온라인'
@@ -828,6 +838,8 @@ function userError(message) {
 /* ───────────── 상태 ───────────── */
 const S = {
   uid: null, me: null,          // me = { name, kind, username }
+  limits: {}, limitWatch: null, // 관리자가 건 제한 { noRoom, mute, banned }
+  flood: new Map(),             // 방 id -> 도배 금지용 기록
   mine: {},                     // 방 id -> 그 방에서의 내 참가자 id
   raw: new Map(),               // 방 id -> 데이터베이스의 방 정보 그대로
   watches: new Map(),           // 방 id -> 구독 끊기 함수
@@ -979,6 +991,11 @@ function startSession(uid, profile) {
     store.set('helpSeen', '1');
     openHelp();
   }
+  S.limitWatch = onValue(R('limits', uid), (snap) => {   // 관리자가 건 제한
+    S.limits = snap.val() || {};
+    if (!S.limits.banned || isAdmin()) return;
+    signOut(auth).then(() => setTimeout(() => showAuthError('관리자가 이 계정을 차단했습니다.'), 300));
+  }, () => {});
   // 내가 들어가 있는 방 목록을 지켜본다
   S.pcWatch = onValue(R('pc', uid, 'status'), (snap) => {
     S.pc = snap.val();
@@ -1016,6 +1033,7 @@ function stopSession() {
   if (S.friendWatch) S.friendWatch();
   if (S.projectWatch) S.projectWatch();
   if (S.pcWatch) S.pcWatch();
+  if (S.limitWatch) S.limitWatch();
   if (S.roomProjectWatch) S.roomProjectWatch();
   for (const stop of S.watches.values()) stop();
   S.timers.forEach(clearInterval);
@@ -1023,6 +1041,7 @@ function stopSession() {
     uid: null, me: null, mine: {}, raw: new Map(), watches: new Map(), rooms: [], byId: new Map(),
     cur: null, cache: new Map(), msgWatch: null, listWatch: null, timers: [], friends: {}, friendWatch: null,
     projects: {}, roomProject: {}, projectWatch: null, roomProjectWatch: null, pc: null, pcWatch: null,
+    limits: {}, limitWatch: null, flood: new Map(),
   });
   closeModal();
   document.title = 'AI Talk';
@@ -1069,6 +1088,8 @@ function viewRoom(id) {
     code: meta.code ? fmtCode(String(meta.code)) : null,
     custom: meta.code && meta.custom ? String(meta.custom) : null,   // 내가 정한 초대코드
     is_owner: meta.owner === S.uid,
+    flood: !!meta.flood,                          // 도배 금지
+    banned: raw.banned || {},                     // 다시 들어올 수 없는 사람들 (uid -> { name, why })
     ai_paused: !!meta.ai_paused,
     ai_chain_limit: Number(meta.ai_chain_limit) || 0,
     ai_streak: Number(raw.streak) || 0,
@@ -1135,6 +1156,7 @@ function systemChange(id, text, n) {   // 안내 메시지 한 줄을 추가하�
 const lastN = (raw) => Number(raw && raw.last && raw.last.n) || 0;
 
 async function createRoom(name, kind, mode, alias) {
+  if (S.limits.noRoom) throw userError('관리자가 방 만들기를 막았습니다.');
   name = cleanName(name, 40);
   if (!name) throw userError('방 이름을 입력하세요.');
   const coding = kind === 'coding';
@@ -1143,7 +1165,7 @@ async function createRoom(name, kind, mode, alias) {
   const mid = randomId(8);
   let code;
   do { code = randomId(8, CODE_ALPHABET); } while ((await get(R('codes', code))).exists());
-  const meta = { name, kind, name_mode: mode, code, owner: S.uid, ai_paused: false, ai_chain_limit: 6, created: SV };
+  const meta = { name, kind, name_mode: mode, code, owner: S.uid, ai_paused: false, ai_chain_limit: 6, flood: true, created: SV };
   if (coding) meta.coding = true;
   const { label } = makeLabel({ meta, members: {} }, 'human', S.me.name, cleanName(alias, 20));
   const sys = systemChange(id, coding
@@ -1166,6 +1188,7 @@ async function joinRoom(code, alias) {
   const id = code ? (await get(R('codes', code))).val() : null;
   const raw = id ? (await get(R('rooms', id))).val() : null;
   if (!raw || !raw.meta) throw userError('초대코드에 해당하는 대화방이 없습니다.');
+  if (isBanned(raw, S.uid)) throw userError('이 방에서 차단되어 다시 들어갈 수 없습니다.');
   const members = raw.members || {};
   const found = Object.entries(members).find(([, m]) => m.uid === S.uid);
   if (found && !found[1].left) {
@@ -1314,6 +1337,8 @@ async function sendFiles(list) {
   const room = current();
   let files = [...list];
   if (!room || !files.length) return;
+  if (S.limits.mute) return toast('관리자가 대화를 막았습니다.', 'err');
+  if (!floodOk(room, '\u0000files')) return;   // 파일 묶음 하나를 메시지 한 번으로 센다
   if (files.length > MAX_FOLDER_FILES) {
     toast(`한 번에 ${MAX_FOLDER_FILES}개까지만 올릴 수 있어요. 앞의 ${MAX_FOLDER_FILES}개만 올립니다.`, 'err');
     files = files.slice(0, MAX_FOLDER_FILES);
@@ -1361,6 +1386,155 @@ async function openFile(roomId, f) {   // 올라온 파일을 받아서 사진�
   } catch (err) { fail(err); }
 }
 
+/* ───────────── 도배 금지 ───────────── */
+// 방장이 켜 둔 방에서만 동작한다. 너무 빨리 보내거나 같은 말을 되풀이하면 잠깐 막고, 계속하면 그 방에서 차단한다.
+const FLOOD = { max: 5, per: 8000, same: 4, cool: 10000, strikes: 3, within: 300000 };
+function floodOk(room, text) {
+  if (!room.flood || isAdmin()) return true;
+  if (!S.flood.has(room.id)) S.flood.set(room.id, { times: [], last: '', same: 0, strikes: [], until: 0 });
+  const f = S.flood.get(room.id);
+  const t = Date.now();
+  if (t < f.until) {
+    toast(`도배 금지: ${Math.ceil((f.until - t) / 1000)}초 뒤에 보낼 수 있어요.`, 'err');
+    return false;
+  }
+  f.times = f.times.filter((x) => t - x < FLOOD.per);
+  f.same = text === f.last ? f.same + 1 : 1;
+  f.last = text;
+  if (f.times.length < FLOOD.max && f.same < FLOOD.same) {
+    f.times.push(t);
+    return true;
+  }
+  Object.assign(f, { until: t + FLOOD.cool, times: [], same: 0, last: '' });
+  f.strikes = f.strikes.filter((x) => t - x < FLOOD.within);
+  f.strikes.push(t);
+  if (f.strikes.length >= FLOOD.strikes && !room.is_owner) {   // 경고를 세 번 받으면 시스템이 차단한다 (방장은 제외)
+    S.flood.delete(room.id);
+    banFromRoom(room.id, S.raw.get(room.id), room.me.mid, `${room.me.label} 님이 도배로 차단되었습니다. 이 방에 다시 들어올 수 없습니다.`, 'flood')
+      .then(() => toast('도배로 이 방에서 차단되었습니다. 다시 들어올 수 없어요.', 'err'), fail);
+    return false;
+  }
+  toast(`도배 금지: 너무 빨리 보내고 있어요. 10초 뒤에 보내 주세요. (경고 ${f.strikes.length}/${FLOOD.strikes}`
+    + (room.is_owner ? ')' : ' · 3번이면 이 방에서 차단됩니다)'), 'err');
+  return false;
+}
+// 방에서 내보내고 다시 들어오지 못하게 한다 (도배 차단, 관리자의 내보내기)
+async function banFromRoom(roomId, raw, mid, text, why) {
+  const member = raw.members[mid];
+  await update(R(), {
+    ...systemChange(roomId, text, lastN(raw)).changes,
+    [`rooms/${roomId}/banned/${member.uid}`]: { name: String(member.label || ''), why, at: SV },
+    [`rooms/${roomId}/members/${mid}/left`]: SV,
+    [`rooms/${roomId}/typing/${mid}`]: null,
+    [`userRooms/${member.uid}/${roomId}`]: null,
+  });
+}
+const isBanned = (raw, uid) => !!(raw && raw.banned && raw.banned[uid]);
+
+/* ───────────── 관리자 (/admin) ───────────── */
+// 관리자 아이디는 Cloudflare 의 ADMIN_ID 변수(내 컴퓨터에서는 firebase-config.json 의 adminId)에 적는다. 쉼표로 여러 명.
+function isAdmin() {
+  if (!S.uid || !ADMIN_IDS.length) return false;
+  const email = (auth.currentUser && auth.currentUser.email || '').toLowerCase();
+  const mine = [S.uid.toLowerCase(), String(S.me.username || '').toLowerCase(), email, email.split('@')[0]];
+  return ADMIN_IDS.some((id) => id && mine.includes(id));
+}
+const LIMITS = [   // [이름, 버튼 글자, 설명]
+  ['noRoom', '방 만들기 금지', '새 대화방·코딩방을 만들 수 없습니다.'],
+  ['mute', '대화 금지', '어느 방에서도 글과 파일을 보낼 수 없습니다.'],
+  ['banned', '사이트 추방', '바로 로그아웃되고 다시 로그인할 수 없습니다.'],
+];
+const admin = { tab: 'users', q: '', users: {}, limits: {}, rooms: {}, open: null };
+async function openAdmin() {
+  if (!isAdmin()) {
+    toast('관리자만 볼 수 있어요.', 'err');
+    closeSettings();
+    return setPath(PATHS[S.tab], true);
+  }
+  showFullPage('관리자', h('p', { class: 'hint' }, '불러오는 중…'), '/admin');
+  try {
+    const [users, limits, rooms] = await Promise.all([get(R('users')), get(R('limits')), get(R('rooms'))]);
+    Object.assign(admin, { users: users.val() || {}, limits: limits.val() || {}, rooms: rooms.val() || {} });
+  } catch (err) { return fail(err); }
+  if (location.pathname === '/admin') drawAdmin();
+}
+function drawAdmin() {
+  const listBox = h('div');
+  const fill = () => {   // 찾는 글자를 칠 때는 목록만 다시 그린다 (한글 입력이 끊기지 않게)
+    const q = admin.q.trim().toLowerCase();
+    const list = admin.tab === 'users' ? adminUsers(q) : adminRooms(q);
+    listBox.replaceChildren(...(list.length ? list : [h('p', { class: 'hint' }, '해당하는 것이 없어요.')]));
+  };
+  const search = h('input', { type: 'search', value: admin.q, placeholder: admin.tab === 'users' ? '이름이나 아이디로 찾기' : '방 이름으로 찾기', 'aria-label': '찾기' });
+  search.addEventListener('input', () => { admin.q = search.value; fill(); });
+  const tabs = h('div', { class: 'seg' }, [['users', '사용자'], ['rooms', '대화방']].map(([id, label]) =>
+    h('button', { type: 'button', class: admin.tab === id ? 'on' : '', onclick: () => { admin.tab = id; admin.q = ''; drawAdmin(); } }, label)));
+  fill();
+  showFullPage('관리자', h('div', null, tabs, search,
+    h('p', { class: 'hint' }, admin.tab === 'users'
+      ? '사람마다 막을 것을 켜고 끕니다. 켠 즉시 그 사람에게 적용됩니다.'
+      : '방을 눌러 참가자를 내보내거나(다시 입장 금지) 방을 삭제합니다.'),
+    listBox), '/admin');
+}
+function adminUsers(q) {
+  return Object.entries(admin.users)
+    .filter(([, u]) => u && (!q || String(u.name || '').toLowerCase().includes(q) || String(u.username || '').toLowerCase().includes(q)))
+    .sort(([, a], [, b]) => String(a.name || '').localeCompare(String(b.name || '')))
+    .map(([uid, u]) => {
+      const lim = admin.limits[uid] || {};
+      return h('div', { class: 'admin-item' },
+        h('div', { class: 'admin-who' }, avatar(uid, u.name || '?', u.kind, u.photo),
+          h('div', null, h('strong', null, u.name || '(이름 없음)', u.kind === 'ai' ? ' (AI)' : '', uid === S.uid ? ' (나)' : ''),
+            h('small', null, u.username ? '@' + u.username : uid))),
+        uid === S.uid ? null : h('div', { class: 'admin-acts' }, LIMITS.map(([key, label, note]) =>
+          h('button', { type: 'button', class: 'btn small' + (lim[key] ? ' primary danger' : ''), title: note, 'aria-pressed': String(!!lim[key]),
+            onclick: () => setLimit(uid, u, key, label, note, !lim[key]) }, lim[key] ? `${label} 중` : label))));
+    });
+}
+async function setLimit(uid, u, key, label, note, on) {
+  const who = u.name || u.username || uid;
+  if (on && !(await confirmBox(label, `${who} 님: ${note} 계속할까요?`, label, true))) return;
+  try {
+    await update(R('limits', uid), { [key]: on ? true : null, by: S.uid, at: SV });
+    admin.limits[uid] = { ...(admin.limits[uid] || {}), [key]: on || null };
+    toast(on ? `${who} 님: ${label}을 켰어요.` : `${who} 님: ${label}을 풀었어요.`);
+  } catch (err) { fail(err); }
+  if (location.pathname === '/admin') drawAdmin();
+}
+function adminRooms(q) {
+  return Object.entries(admin.rooms)
+    .filter(([, r]) => r && r.meta && (!q || String(r.meta.name || '').toLowerCase().includes(q)))
+    .sort(([, a], [, b]) => ((b.last || {}).ts || 0) - ((a.last || {}).ts || 0))
+    .map(([id, r]) => {
+      const members = Object.entries(r.members || {}).filter(([, m]) => m && !m.left);
+      const owner = admin.users[r.meta.owner] || {};
+      const open = admin.open === id;
+      const again = () => openAdmin().then(() => { admin.open = id; if (location.pathname === '/admin') drawAdmin(); });
+      return h('div', { class: 'admin-item' },
+        h('button', { type: 'button', class: 'admin-room', 'aria-expanded': String(open), onclick: () => { admin.open = open ? null : id; drawAdmin(); } },
+          h('strong', null, r.meta.name || (r.meta.dm ? '1:1 대화' : '(이름 없음)')),
+          h('small', null, `${r.meta.project || r.meta.coding ? '코딩방 · ' : ''}${members.length}명 · 방장 ${owner.name || '?'}`)),
+        !open ? null : h('div', { class: 'admin-members' },
+          members.map(([mid, m]) => h('div', { class: 'row' },
+            h('div', null, h('strong', null, m.label, m.kind === 'ai' ? ' (AI)' : ''), h('small', null, (admin.users[m.uid] || {}).username ? '@' + admin.users[m.uid].username : '')),
+            h('button', { type: 'button', class: 'btn small danger', onclick: async () => {
+              if (!(await confirmBox('내보내기', `${m.label} 님을 이 방에서 내보내고 다시 못 들어오게 할까요?`, '내보내기', true))) return;
+              banFromRoom(id, r, mid, `${m.label} 님이 관리자에 의해 내보내졌습니다.`, 'admin').then(again, fail);
+            } }, '내보내기'))),
+          Object.entries(r.banned || {}).map(([uid, b]) => h('div', { class: 'row' },
+            h('div', null, h('strong', null, (b && b.name) || (admin.users[uid] || {}).name || uid), h('small', null, b && b.why === 'flood' ? '도배로 차단됨' : '입장 금지')),
+            h('button', { type: 'button', class: 'btn small', onclick: () => update(R(), { [`rooms/${id}/banned/${uid}`]: null }).then(again, fail) }, '금지 풀기'))),
+          h('button', { type: 'button', class: 'btn small danger', onclick: async () => {
+            if (!(await confirmBox('방 삭제', `'${r.meta.name || '이 방'}' 을 삭제할까요? 대화와 파일이 모두 지워지고 되돌릴 수 없습니다.`, '삭제', true))) return;
+            const changes = { [`rooms/${id}`]: null, [`messages/${id}`]: null, [`files/${id}`]: null };
+            if (r.meta.code) changes[`codes/${r.meta.code}`] = null;
+            if (r.meta.custom) changes[`codes/${r.meta.custom}`] = null;
+            for (const m of Object.values(r.members || {})) if (m && m.uid) changes[`userRooms/${m.uid}/${id}`] = null;
+            update(R(), changes).then(() => { admin.open = null; toast('방을 삭제했어요.'); return openAdmin(); }, fail);
+          } }, icon('trash'), '방 삭제')));
+    });
+}
+
 /* ───────────── 친구 ───────────── */
 const handleKey = (name) => String(name).toLowerCase().replace(/[.$#[\]/]/g, ',');   // 데이터베이스 키에 못 쓰는 글자 바꾸기
 async function ensureHandle(uid, profile) {   // 친구가 아이디로 나를 찾을 수 있게 '아이디 → 계정' 표를 채운다
@@ -1396,6 +1570,7 @@ async function inviteFriend(roomId, uid) {   // 친구를 초대코드 없이 �
   const f = S.friends[uid];
   const raw = (await get(R('rooms', roomId))).val();   // 연달아 초대해도 이름·번호가 겹치지 않게 최신 정보로
   if (!f || !raw || !raw.meta) throw userError('초대할 수 없어요.');
+  if (isBanned(raw, uid)) throw userError(`${f.name} 님은 이 방에서 차단되어 초대할 수 없어요. (대화방 정보에서 풀 수 있습니다)`);
   const found = Object.entries(raw.members || {}).find(([, m]) => m.uid === uid);
   if (found && !found[1].left) throw userError(`${f.name} 님은 이미 이 방에 있어요.`);
   if (raw.meta.kind === 'private' && Object.values(raw.members).filter((m) => !m.left).length >= 2) throw userError('개인대화방에는 두 명까지만 들어올 수 있어요.');
@@ -1827,6 +2002,7 @@ async function signOrder(secret, roomId, act, to, nonce, t, text) {
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 async function sendText(room, text, act = '', to = '', extra = {}) {   // to: 승인·취소처럼 AI 하나만 받아야 하는 지시의 대상, extra: 첨부 파일 등
+  if (S.limits.mute) throw userError('관리자가 대화를 막았습니다.');
   const n = lastN(S.raw.get(room.id)) + 1;
   const key = push(R('messages', room.id)).key;
   const mid = room.me.mid;
@@ -1948,16 +2124,19 @@ function closeSettings() {
   $('#settings-body').replaceChildren();
   $('#main').hidden = false;
 }
-function showSettings(body) {
+function showFullPage(title, body, path) {   // 설정·관리자처럼 따로 된 화면
+  $('#page-title').textContent = title;
   $('#settings-body').replaceChildren(body);
   $('#main').hidden = true;
   $('#settings').hidden = false;
-  setPath('/setting');
+  setPath(path);
 }
+const showSettings = (body) => showFullPage('설정', body, '/setting');
 function showPage() {   // 지금 주소에 맞는 화면을 보여 준다
   if (!S.uid) return;
   const path = location.pathname.replace(/\/+$/, '');
   if (path === '/setting') return openSettings();
+  if (path === '/admin') return openAdmin();
   closeSettings();
   if (path === '/talk' || path === '/code') {
     S.tab = path === '/code' ? 'code' : 'chat';
@@ -2054,6 +2233,7 @@ function openSettings() {
     h('div', { class: 'set-group' }, h('h4', null, '기타'),
       h('div', { class: 'stack' },
         h('button', { type: 'button', class: 'btn', onclick: () => openHelp() }, icon('help'), '설명서 보기'),
+        isAdmin() ? h('button', { type: 'button', class: 'btn', onclick: openAdmin }, icon('lock'), '관리자 페이지') : null,
         h('a', { class: 'btn', href: '/' + encodeURIComponent('설명서.pdf'), target: '_blank', rel: 'noopener' }, icon('down'), '설명서 PDF 받기'),
         h('button', { type: 'button', class: 'btn', onclick: () => openProject() }, icon('folder'), '새 프로젝트 만들기'),
         h('button', { type: 'button', class: 'btn danger', onclick: logout }, icon('logout'), '로그아웃')))));
@@ -2165,7 +2345,7 @@ function renderChrome(room) {
 function renderInfo(room, force) {
   const box = $('#info-body');
   const sig = JSON.stringify([room.id, room.name, room.code, room.custom, room.kind, room.is_dm, room.name_mode, room.is_owner,
-    room.ai_paused, room.ai_chain_limit, room.members, S.cli, S.count, S.friends, S.projects, S.roomProject[room.id]]);
+    room.ai_paused, room.ai_chain_limit, room.flood, room.banned, room.members, S.cli, S.count, S.friends, S.projects, S.roomProject[room.id]]);
   if (!force && box.dataset.sig === sig) return;
   const focused = document.activeElement;
   if (!force && focused && focused.tagName === 'INPUT' && box.contains(focused)) return;   // 숫자를 고치는 중에는 다시 그리지 않는다
@@ -2349,6 +2529,17 @@ function renderInfo(room, force) {
       h('div', { class: 'row' }, h('div', null, h('strong', null, 'AI 응답 일시정지'), h('small', null, '켜 두면 AI가 답하지 않아요.')), paused),
       h('div', { class: 'row' }, h('div', null, h('strong', null, 'AI끼리 연속 대화'),
         h('small', null, '사람이 말한 뒤 AI 메시지가 연속으로 이어질 수 있는 개수예요. 0이면 AI끼리는 대화하지 않아요.')), limit)));
+    const flood = h('button', { type: 'button', class: 'switch', role: 'switch', 'aria-checked': String(room.flood), 'aria-label': '도배 금지',
+      onclick: () => setMeta(room, { flood: !room.flood }, room.flood ? '도배 금지를 껐습니다.' : '도배 금지를 켰습니다.').catch(fail) });
+    const banned = Object.entries(room.banned);
+    parts.push(h('section', { class: 'sec' },
+      h('h4', null, '도배 금지'),
+      h('div', { class: 'row' }, h('div', null, h('strong', null, '도배 금지'),
+        h('small', null, '8초에 5번 넘게 보내거나 같은 말을 4번 되풀이하면 10초 동안 막아요. 경고 3번이면 방에서 차단되고 다시 들어올 수 없어요.')), flood),
+      banned.length ? h('h4', null, '차단된 사람') : null,
+      banned.map(([uid, b]) => h('div', { class: 'row' },
+        h('div', null, h('strong', null, (b && b.name) || '참가자'), h('small', null, b && b.why === 'flood' ? '도배로 차단됨' : '관리자가 내보냄')),
+        h('button', { type: 'button', class: 'btn small', onclick: () => update(R(), { [`rooms/${room.id}/banned/${uid}`]: null }).then(() => toast('차단을 풀었어요. 다시 들어올 수 있습니다.'), fail) }, '풀기')))));
   }
 
   const act = (name, text, fn, cls) => h('button', { type: 'button', class: 'btn' + (cls ? ' ' + cls : ''), onclick: fn }, icon(name), text);
@@ -2717,6 +2908,7 @@ async function sendMessage() {
   const input = $('#input');
   const text = input.value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, 8000);
   if (!room || !text || S.sending) return;
+  if (!floodOk(room, text)) return;
   S.sending = true;
   input.value = '';
   autosize();

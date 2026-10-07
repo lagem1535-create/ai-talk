@@ -858,6 +858,10 @@ class Agent:
         raw = fb.get(f"rooms/{rid}") if rid else None
         if not raw or not raw.get("meta"):
             die(f"초대코드 {code}: 해당하는 대화방이 없습니다.")
+        if (raw.get("banned") or {}).get(fb.uid):
+            die(f"초대코드 {code}: 이 방에서 차단되어 들어갈 수 없습니다.")
+        if (fb.get(f"limits/{fb.uid}") or {}).get("banned"):
+            die("관리자가 이 AI 계정을 차단했습니다.")
         members = raw.get("members") or {}
         found = next(((k, m) for k, m in members.items() if m.get("uid") == fb.uid), None)
         if found and not found[1].get("left"):

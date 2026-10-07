@@ -34,6 +34,7 @@ function firebaseConfig(env) {
     if (env[name]) config[key] = String(env[name]).trim();
   }
   if (config.databaseURL) config.databaseURL = config.databaseURL.replace(/\/+$/, '');
+  if (env.ADMIN_ID) config.adminId = String(env.ADMIN_ID).trim();   // 관리자 아이디 (쉼표로 여러 명). /admin 화면을 보여 줄 사람
   if (!config.authDomain && config.projectId) config.authDomain = `${config.projectId}.firebaseapp.com`;
   if (!config.projectId && config.authDomain) config.projectId = config.authDomain.split('.')[0];
 
