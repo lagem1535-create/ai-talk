@@ -313,6 +313,10 @@ input:focus { border-color: var(--ink); box-shadow: 0 0 0 3px color-mix(in srgb,
 .admin-who small, .admin-room small { display: block; color: var(--ink-3); font-size: 12px; }
 .admin-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .admin-room { display: block; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.admin-count { margin-left: 8px; color: var(--ink-3); font-size: 12px; }
+.admin-msg { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.admin-msg time { display: block; color: var(--ink-3); font-size: 11.5px; }
+.admin-msg p { margin: 2px 0 0; white-space: pre-wrap; }
 .admin-members { margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
 .settings-body input[type=search] { width: 100%; margin: 8px 0 2px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); font: inherit; }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1486,10 +1490,38 @@ function adminUsers(q) {
         h('div', { class: 'admin-who' }, avatar(uid, u.name || '?', u.kind, u.photo),
           h('div', null, h('strong', null, u.name || '(이름 없음)', u.kind === 'ai' ? ' (AI)' : '', uid === S.uid ? ' (나)' : ''),
             h('small', null, u.username ? '@' + u.username : uid))),
-        uid === S.uid ? null : h('div', { class: 'admin-acts' }, LIMITS.map(([key, label, note]) =>
-          h('button', { type: 'button', class: 'btn small' + (lim[key] ? ' primary danger' : ''), title: note, 'aria-pressed': String(!!lim[key]),
-            onclick: () => setLimit(uid, u, key, label, note, !lim[key]) }, lim[key] ? `${label} 중` : label))));
+        h('div', { class: 'admin-acts' },
+          h('button', { type: 'button', class: 'btn small', onclick: () => openUserLog(uid, u).catch(fail) }, '자세히 보기'),
+          uid === S.uid ? null : LIMITS.map(([key, label, note]) =>
+            h('button', { type: 'button', class: 'btn small' + (lim[key] ? ' primary danger' : ''), title: note, 'aria-pressed': String(!!lim[key]),
+              onclick: () => setLimit(uid, u, key, label, note, !lim[key]) }, lim[key] ? `${label} 중` : label))));
     });
+}
+// 자세히 보기: 그 사람이 들어가 있는(있었던) 방마다 쓴 글을 최근 것부터 보여 준다
+const LOG_PAGE = 300;   // 방마다 최근 메시지 몇 개 안에서 찾을지
+async function openUserLog(uid, u) {
+  const who = u.name || u.username || uid;
+  const title = `${who} 님이 쓴 글`;
+  openModal(title, h('p', { class: 'hint' }, '불러오는 중…'), null, true);
+  const blocks = [];
+  let total = 0;
+  for (const [id, r] of Object.entries(admin.rooms)) {
+    const mids = Object.entries((r && r.members) || {}).filter(([, m]) => m && m.uid === uid).map(([mid]) => mid);
+    if (!mids.length) continue;
+    const snap = await get(query(R('messages', id), orderByKey(), limitToLast(LOG_PAGE)));
+    const list = Object.values(snap.val() || {}).filter((m) => m && mids.includes(m.m)).reverse();
+    if (!list.length) continue;
+    total += list.length;
+    blocks.push(h('div', { class: 'admin-item' },
+      h('strong', null, (r.meta && r.meta.name) || '1:1 대화'), h('small', { class: 'admin-count' }, `${list.length}개`),
+      list.map((m) => h('div', { class: 'admin-msg' },
+        h('time', null, fullFmt.format(Number(m.ts) || 0)),
+        h('p', null, String(m.text || '') || (m.file ? `(${m.file.thumb ? '사진' : '파일'}) ${m.file.name || ''}` : ''))))));
+  }
+  if ($('#modal').hidden || $('#modal-title').textContent !== title) return;   // 기다리는 사이에 창을 닫았다
+  openModal(title, h('div', null,
+    h('p', { class: 'hint' }, `방마다 최근 메시지 ${LOG_PAGE}개 안에서 찾았어요. 모두 ${total}개, 최근 것부터 보여 줍니다.`),
+    blocks.length ? blocks : h('p', null, '쓴 글이 없어요.')), null, true);
 }
 async function setLimit(uid, u, key, label, note, on) {
   const who = u.name || u.username || uid;
